@@ -10,10 +10,11 @@ endif()
 
 # ---- core library -----------------------------------------------------------
 add_library(weft_core STATIC
-  core/src/osc.cpp
-  core/src/config.cpp
-  core/src/chain.cpp
-  core/src/osc_io.cpp
+    core/src/osc.cpp
+    core/src/config.cpp
+    core/src/chain.cpp
+    core/src/curve.cpp
+    core/src/osc_io.cpp
 )
 target_include_directories(weft_core PUBLIC
   core/include
@@ -29,6 +30,7 @@ add_executable(weft_core_tests
   core/tests/test_osc.cpp
   core/tests/test_config.cpp
   core/tests/test_chain.cpp
+  core/tests/test_curve.cpp
 )
 target_link_libraries(weft_core_tests PRIVATE weft_core)
 target_include_directories(weft_core_tests PRIVATE third_party/doctest)

@@ -35,18 +35,19 @@ bool Chain::load(const ChainConfig& cfg, std::string* err) {
         }
         ps.pluginId = slot.id;
         ps.loadedPath = normalizePath(slot.pluginPath);
-        // Apply configured params on top of plugin defaults.
+        // Apply configured params on top of plugin defaults. Curve params
+        // resolve to their frame-0 (timeline start) value at load time; the
+        // renderer re-evaluates them per block as the timeline advances.
         for (const auto& kv : slot.params) {
-            if (auto* p = ps.findByName(kv.first)) {
-                p->value = Param::clamp01(kv.second);
-            }
-            // Unknown names are kept in config (may appear after hot-swap);
-            // they are not applied now.
+            if (auto* p = ps.findByName(kv.first))
+                p->value = Param::clamp01(kv.second.atStart());
         }
+        // Unknown names are kept in config (may appear after hot-swap);
+        // they are not applied now.
         // Model updates alone are invisible to the audio — the values must be
         // pushed into the live plugin instance. (This is what makes a config's
         // `params:` block actually change what the chain renders.)
-        backend_.setParams(slot.id, slot.params);
+        backend_.setParams(slot.id, evalParams(slot.params, 0));
         sets_.push_back(std::move(ps));
     }
     cfg_ = cfg;
@@ -76,8 +77,8 @@ bool Chain::apply(const ChainConfig& cfg, std::string* err) {
                 ps = std::move(fresh);
             }
             for (const auto& kv : slot.params)
-                if (auto* p = ps.findByName(kv.first)) p->value = Param::clamp01(kv.second);
-            backend_.setParams(slot.id, slot.params);
+                if (auto* p = ps.findByName(kv.first)) p->value = Param::clamp01(kv.second.atStart());
+            backend_.setParams(slot.id, evalParams(slot.params, 0));
             break;
         }
         if (!found) {
@@ -92,7 +93,7 @@ bool Chain::apply(const ChainConfig& cfg, std::string* err) {
                                          : std::string("(disabled)");
             if (!slot.enabled) ps.pluginName = "(disabled)";
             for (const auto& kv : slot.params)
-                if (auto* p = ps.findByName(kv.first)) p->value = Param::clamp01(kv.second);
+                if (auto* p = ps.findByName(kv.first)) p->value = Param::clamp01(kv.second.atStart());
             sets_.push_back(std::move(ps));
         }
     }

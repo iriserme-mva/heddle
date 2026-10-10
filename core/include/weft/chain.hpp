@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "weft/curve.hpp"
 #include "weft/param.hpp"
 
 namespace weft {
@@ -13,12 +14,20 @@ struct SlotConfig {
     std::string pluginPath;     // path to .vst3 / .vst
     std::string pluginId;       // optional VST3 class id / VST2 factory id (disambiguation)
     bool enabled = true;
-    // Param name -> normalized value (0..1). Missing params keep plugin defaults.
-    std::vector<std::pair<std::string, float>> params;
+    // Param name -> value: a static float (0..1) OR a time-series curve
+    // (see curve.hpp / docs/CONFIG.md). Missing params keep plugin defaults.
+    std::vector<std::pair<std::string, ParamSpec>> params;
 
-    float paramValue(const std::string& name, float fallback = 0.f) const {
+    // The full spec for a param (static value or curve), or nullptr.
+    const ParamSpec* paramSpec(const std::string& name) const {
         for (const auto& kv : params)
-            if (kv.first == name) return kv.second;
+            if (kv.first == name) return &kv.second;
+        return nullptr;
+    }
+    // Load-time value of a param: static value, or the curve's frame-0 value.
+    // (Backward-compatible accessor; returns the fallback when absent.)
+    float paramValue(const std::string& name, float fallback = 0.f) const {
+        if (const ParamSpec* s = paramSpec(name)) return s->atStart();
         return fallback;
     }
     bool hasParam(const std::string& name) const {
@@ -27,6 +36,19 @@ struct SlotConfig {
         return false;
     }
 };
+
+// Evaluate a slot's params at an absolute sample position, producing the
+// concrete (name, value) pairs a backend's setParams() consumes. Static
+// params evaluate to their value; curves interpolate at `frame`.
+inline std::vector<std::pair<std::string, float>>
+evalParams(const std::vector<std::pair<std::string, ParamSpec>>& params,
+           int64_t frame) {
+    std::vector<std::pair<std::string, float>> out;
+    out.reserve(params.size());
+    for (const auto& kv : params)
+        out.emplace_back(kv.first, Param::clamp01(kv.second.at(frame)));
+    return out;
+}
 
 struct ChainConfig {
     int sampleRate = 44100;

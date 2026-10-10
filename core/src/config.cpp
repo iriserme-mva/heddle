@@ -1,6 +1,7 @@
 #include "weft/config.hpp"
 
 #include <fstream>
+#include <limits>
 #include <sstream>
 
 #include "nlohmann/json.hpp"
@@ -11,6 +12,44 @@ namespace config {
 using json = nlohmann::json;
 
 namespace {
+// Parse one param value: a plain number is a static value (the
+// backward-compatible form); an object with a "curve" array is a time
+// series. Returns false and fills err on any violation.
+bool parseParamValue(const json& v, ParamSpec& spec, std::string& err) {
+    if (v.is_number()) {
+        spec.value = Param::clamp01(v.get<float>());
+        return true;
+    }
+    if (v.is_object() && v.contains("curve") && v["curve"].is_array()) {
+        const json& c = v["curve"];
+        int64_t last = std::numeric_limits<int64_t>::min();
+        for (const auto& kf : c) {
+            if (!kf.is_array() || kf.size() != 2 ||
+                !kf[0].is_number_integer() || !kf[1].is_number()) {
+                err = "curve keyframes must be [frame:int, value:number] pairs";
+                return false;
+            }
+            const int64_t frame = kf[0].get<int64_t>();
+            if (frame < 0) {
+                err = "curve keyframe frame must be >= 0";
+                return false;
+            }
+            if (frame < last) {
+                err = "curve keyframes must be sorted by ascending frame";
+                return false;
+            }
+            last = frame;
+            spec.curve.keyframes.emplace_back(frame, Param::clamp01(kf[1].get<float>()));
+        }
+        if (spec.curve.empty()) {
+            err = "curve must have at least one keyframe";
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
 bool validateSlot(const json& s, SlotConfig& sc, std::string& err) {
     if (!s.contains("id") || !s["id"].is_string() || s["id"].get<std::string>().empty()) {
         err = "chain slot missing string 'id'";
@@ -31,12 +70,14 @@ bool validateSlot(const json& s, SlotConfig& sc, std::string& err) {
             return false;
         }
         for (auto it = s["params"].begin(); it != s["params"].end(); ++it) {
-            if (!it.value().is_number()) {
-                err = "slot '" + sc.id + "' param '" + it.key() + "' must be a number (0..1)";
+            ParamSpec spec;
+            std::string perr;
+            if (!parseParamValue(it.value(), spec, perr)) {
+                err = "slot '" + sc.id + "' param '" + it.key() + "': " + perr +
+                      " (number or {\"curve\": [[frame, value], ...]})";
                 return false;
             }
-            float v = it.value().get<float>();
-            sc.params.emplace_back(it.key(), Param::clamp01(v));
+            sc.params.emplace_back(it.key(), std::move(spec));
         }
     }
     return true;
@@ -87,6 +128,20 @@ bool parseFile(const std::string& path, ChainConfig& out, std::string* err) {
     return parse(ss.str(), out, err);
 }
 
+namespace {
+// Serialize a ParamSpec back to JSON: static values stay plain numbers
+// (byte-compatible with pre-curve configs), curves become
+// {"curve": [[frame, value], ...]}.
+json paramToJson(const ParamSpec& spec) {
+    if (!spec.isCurve())
+        return json(spec.value);
+    json arr = json::array();
+    for (const auto& kf : spec.curve.keyframes)
+        arr.push_back(json::array({json(kf.first), json(kf.second)}));
+    return json{{"curve", std::move(arr)}};
+}
+}  // namespace
+
 std::string dump(const ChainConfig& cfg) {
     json j;
     j["sample_rate"] = cfg.sampleRate;
@@ -99,7 +154,7 @@ std::string dump(const ChainConfig& cfg) {
         if (!s.pluginId.empty()) slot["plugin_id"] = s.pluginId;
         slot["enabled"] = s.enabled;
         json p = json::object();
-        for (const auto& kv : s.params) p[kv.first] = kv.second;
+        for (const auto& kv : s.params) p[kv.first] = paramToJson(kv.second);
         if (!p.empty()) slot["params"] = p;
         j["chain"].push_back(slot);
     }

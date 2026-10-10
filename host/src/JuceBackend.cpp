@@ -86,15 +86,15 @@ bool JuceBackend::load(const SlotConfig& slot, ParamSet& outParams) {
     std::string err;
     if (!loadSlot(slot.id, slot.pluginPath, outParams, &err))
         return false;
-    // Apply configured param values on top of plugin defaults. The model
-    // update is for introspection; the push below is what actually changes
-    // the audio.
+    // Apply configured param values on top of plugin defaults (curve params
+    // resolve to their frame-0 value). The model update is for
+    // introspection; the push below is what actually changes the audio.
     for (const auto& kv : slot.params) {
         weft::Param* p = outParams.findByName(kv.first);
         if (p != nullptr)
-            p->value = weft::Param::clamp01(kv.second);
+            p->value = weft::Param::clamp01(kv.second.atStart());
     }
-    return setParams(slot.id, slot.params);
+    return setParams(slot.id, evalParams(slot.params, 0));
 }
 
 bool JuceBackend::setParams(const std::string& slotId,
