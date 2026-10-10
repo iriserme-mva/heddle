@@ -29,6 +29,10 @@
 #include <cstring>
 #include <cstdlib>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace weft {
 
 namespace {
@@ -50,6 +54,8 @@ struct OscUdp::Impl {
     SOCKET_TYPE sock = -1;
     struct sockaddr_in remote{};
     bool haveRemote = false;
+    struct sockaddr_in sender{};
+    bool haveSender = false;
     Impl() {
 #ifdef _WIN32
         (void)wsa();
@@ -75,6 +81,7 @@ void OscUdp::close() {
         impl_->sock = -1;
 #endif
     }
+    impl_->haveSender = false;
     localPort_ = 0;
 }
 
@@ -155,7 +162,7 @@ bool OscUdp::send(const OscMsg& msg) {
     return n == (int)data.size();
 }
 
-bool OscUdp::poll(OscMsg& out) {
+bool OscUdp::poll(OscMsg& out, SourceAddr* src) {
     if (!SOCKET_VALID(impl_->sock)) return false;
     // Make the socket non-blocking for a zero-wait poll.
 #ifdef _WIN32
@@ -171,7 +178,31 @@ bool OscUdp::poll(OscMsg& out) {
     int n = ::recvfrom(impl_->sock, buf, (int)sizeof buf, 0,
                        (struct sockaddr*)&from, &flen);
     if (n <= 0) return false;
+    impl_->sender = from;
+    impl_->haveSender = true;
+    if (src != nullptr) {
+        src->port = ntohs(from.sin_port);
+        char ipbuf[INET_ADDRSTRLEN] = {0};
+#ifdef _WIN32
+        (void)inet_ntop(AF_INET, &from.sin_addr, ipbuf, sizeof(ipbuf));
+#else
+        (void)inet_ntop(AF_INET, &from.sin_addr, ipbuf, (socklen_t)sizeof(ipbuf));
+#endif
+        src->ip = ipbuf;
+    }
     return oscDecode(buf, size_t(n), out);
+}
+
+bool OscUdp::sendTo(const OscMsg& msg, const SourceAddr& dest) {
+    if (!SOCKET_VALID(impl_->sock)) return false;
+    const std::string data = oscEncode(msg);
+    struct sockaddr_in to{};
+    to.sin_family = AF_INET;
+    to.sin_port = htons(uint16_t(dest.port));
+    if (!resolveAddr(dest.ip, to.sin_addr)) return false;
+    int n = ::sendto(impl_->sock, data.data(), (int)data.size(), 0,
+                     (struct sockaddr*)&to, sizeof to);
+    return n == (int)data.size();
 }
 
 }  // namespace weft

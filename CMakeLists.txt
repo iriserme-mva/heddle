@@ -22,6 +22,9 @@ target_include_directories(weft_core PUBLIC
 )
 if(WIN32)
   target_compile_definitions(weft_core PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
+  # osc_io.cpp uses Winsock on Windows; propagate the import library to every
+  # consumer of the static lib (tests, hosts, probes).
+  target_link_libraries(weft_core PUBLIC ws2_32)
 endif()
 
 # ---- tests ------------------------------------------------------------------
@@ -31,6 +34,7 @@ add_executable(weft_core_tests
   core/tests/test_config.cpp
   core/tests/test_chain.cpp
   core/tests/test_curve.cpp
+  core/tests/test_osc_udp.cpp
 )
 target_link_libraries(weft_core_tests PRIVATE weft_core)
 target_include_directories(weft_core_tests PRIVATE third_party/doctest)
