@@ -7,6 +7,12 @@
 // per-slot `params:` blocks are pushed onto the live instances), and writes
 // the result to the output WAV at the same rate/channel count.
 //
+// Params may be static (a plain number) or time-series curves (a
+// `{"curve": [[frame, value], ...]}` object — see docs/CONFIG.md). Curves are
+// evaluated at the start of every processing block against the absolute
+// sample position and pushed to the plugin, so the automation follows the
+// timeline as the render advances.
+//
 // Bit depth: 32 (default) = 32-bit float WAV, lossless for the float chain;
 // 16 and 24 are plain integer conversion (no dither). A mono input is
 // upmixed to stereo by the reader; the output channel count is the chain bus
@@ -143,6 +149,22 @@ int main(int argc, char** argv) {
 
     const int width = std::max(std::max(inChannels, 2), backend.busWidth());
 
+    // Curve params: a slot's param can be a time-series (see weft/curve.hpp).
+    // At each block's start we re-evaluate the slot's params at the absolute
+    // sample position and push them to the plugin, so the automation follows
+    // the timeline as the render advances. Slots with only static params are
+    // untouched (their values were already pushed at load time).
+    std::vector<const weft::SlotConfig*> curvySlots;
+    for (const auto& slot : cfg.slots) {
+        if (slot.enabled)
+            for (const auto& kv : slot.params)
+                if (kv.second.isCurve()) {
+                    curvySlots.push_back(&slot);
+                    break;
+                }
+    }
+    const bool hasCurves = !curvySlots.empty();
+
     // ---- output writer ----------------------------------------------------
     // AudioFormatManager has no writer helper (only createReaderFor), so build
     // the WAV writer directly. It takes ownership of the stream and deletes it
@@ -181,6 +203,18 @@ int main(int argc, char** argv) {
         if (!reader->read(&inBuf, 0, n, pos, true, true))
             return fail("failed reading input at sample " + std::to_string(pos));
         pos += n;
+
+        // Timeline: advance any curve params to this block's start.
+        // Frame 0 of the timeline == sample 0 of the input file, so the
+        // absolute position is simply pos - n. Static-only chains skip this
+        // entirely (setParams was already done at load time).
+        if (hasCurves) {
+            const int64_t frame = pos - n;
+            for (const auto* slot : curvySlots) {
+                backend.setParams(slot->id,
+                                  weft::evalParams(slot->params, frame));
+            }
+        }
 
         // Ping-pong through the active slots; buffer 0 starts with the input.
         // We always hand process() the FULL blockSize: every working buffer is

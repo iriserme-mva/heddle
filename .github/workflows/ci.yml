@@ -131,7 +131,7 @@ jobs:
           print("SMOKE OK")
           EOF
 
-      - name: Render (offline audio->audio; verify config params reach the plugin)
+      - name: Render (offline audio->audio; verify config params + curves reach the plugin)
         shell: bash
         run: |
           # The renderer must run the VST3 through the offline path at the
@@ -165,6 +165,13 @@ jobs:
                             "enabled": True, "params": {"DryMix": 0.5}}]}
           with open("render_chain.json", "w") as f:
               json.dump(cfg, f)
+          # Curve form: DryMix ramps 0.5 -> 1.0 over the full 2048-frame file.
+          cfg2 = {"sample_rate": RATE, "block_size": 512,
+                  "chain": [{"id": "gain", "plugin": plugin,
+                             "enabled": True,
+                             "params": {"DryMix": {"curve": [[0, 0.5], [2048, 1.0]]}}}]
+          with open("render_curve.json", "w") as f:
+              json.dump(cfg2, f)
           print("render config plugin =", plugin)
           PYEOF
 
@@ -206,4 +213,47 @@ jobs:
           print(f"input mean {in_mean:.2f}  output mean {out_mean:.2f}  gain {gain:.4f}")
           assert abs(gain - 0.5) < 0.01, gain   # 0.5 == configured DryMix
           print("RENDER OK")
+          PYEOF
+
+          # ---- curve case --------------------------------------------------
+          # DryMix ramps 0.5 -> 1.0 over the whole 2048-frame file. At each
+          # 512-frame block start the curve evaluates to 0.5, 0.625, 0.75,
+          # 0.875, and the plugin applies that gain per block (it reads the
+          # param live in processBlock). Mean gain = 0.6875. If curve
+          # automation were ignored — stuck at the load-time value (0.5) or at
+          # the last value (1.0) — the mean would be 0.5 or 1.0, not 0.6875.
+          "$render" in.wav render_curve.json out_curve.wav --bits 16 || { echo "::error::weft-render (curve) failed"; exit 1; }
+
+          python3 - <<'PYEOF'
+          import struct
+
+          def parse16(path):
+              raw = open(path, "rb").read()
+              assert raw[:4] == b"RIFF" and raw[8:12] == b"WAVE", raw[:12]
+              pos, fmt, data = 12, None, None
+              while pos + 8 <= len(raw):
+                  cid = raw[pos:pos + 4]
+                  size = struct.unpack("<I", raw[pos + 4:pos + 8])[0]
+                  body = raw[pos + 8:pos + 8 + size]
+                  if cid == b"fmt ":
+                      fmt = body
+                  elif cid == b"data":
+                      data = body
+                      break
+                  pos += 8 + size + (size & 1)
+              assert fmt is not None and data is not None, (path, "chunks")
+              ch   = struct.unpack("<H",  fmt[2:4])[0]
+              rate = struct.unpack("<I",  fmt[4:8])[0]
+              bits = struct.unpack("<H",  fmt[14:16])[0]
+              n = len(data) // 2
+              return ch, rate, bits, struct.unpack("<%dh" % n, data)
+
+          och, orate, obits, out_s = parse16("out_curve.wav")
+          assert (och, orate, obits) == (2, 44100, 16), (och, orate, obits)
+          assert len(out_s) // och == 2048, len(out_s) // och
+          out_mean = sum(out_s) / len(out_s)
+          gain = out_mean / 16384.0   # input is the constant 0.5 tone (16384)
+          print(f"curve output mean {out_mean:.2f}  mean gain {gain:.4f}")
+          assert abs(gain - 0.6875) < 0.01, gain   # (0.5+0.625+0.75+0.875)/4
+          print("RENDER CURVE OK")
           PYEOF
