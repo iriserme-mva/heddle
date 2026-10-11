@@ -15,9 +15,8 @@ with — here, the plugins whose signals are interlaced into one chain.
 
 | Layer | What it is | State |
 |---|---|---|
-| `core/` | Platform-agnostic C++17 library: param model, chain, JSON config, OSC wire + addressing, UDP transport | **building & tested** (27/27 test cases green) |
-| `host/` | JUCE-based VST3 wrapper backend + `weft_smoke` introspection CLI + `weft-render` offline CLI | **building & CI-tested** |
-| `cli/` | Offline audio→audio CLI (`weft-render`) with per-slot JSON params | **building & CI-tested** |
+| `core/` | Platform-agnostic C++17 library: param model, chain, JSON config, OSC wire + addressing, UDP transport, time-series params (static or curve) | **building & tested** (39/39 test cases, 253 assertions) |
+| `host/` | JUCE-based VST3 wrapper backend + `weft_smoke` introspection CLI + `weft-render` offline audio→audio CLI | **building & CI-tested** |
 
 Progress is tracked in [STATUS.md](STATUS.md).
 
@@ -77,7 +76,7 @@ core-only builds stay network-free):
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DWEFT_BUILD_HOST=ON
-cmake --build build -j4 --target weft_smoke weft-smoke-plugin_VST3 weft-render
+cmake --build build -j4 --target weft_smoke weft_smoke_plugin_VST3 weft-render
 ```
 
 > JUCE 8 dropped MinGW, so the host layer builds on MSVC (Windows), AppleClang
@@ -116,12 +115,14 @@ weft/
 ├── core/
 │   ├── include/weft/
 │   │   ├── param.hpp      # Param / ParamSet model
+│   │   ├── curve.hpp      # time-series param (static float or curve)
 │   │   ├── chain.hpp      # Chain + IPluginBackend
 │   │   ├── config.hpp     # JSON config parse/dump/merge
 │   │   ├── osc.hpp        # OSC 1.0 wire codec + /chain addressing
-│   │   └── osc_io.hpp     # UDP OSC transport
+│   │   └── osc_io.hpp     # UDP OSC transport (source tracking)
 │   ├── src/               # implementations
 │   └── tests/             # targeted doctest suites
+├── host/                  # JUCE backend + weft_smoke + weft-render (opt-in)
 ├── docs/                  # CONFIG.md, OSC.md, ARCHITECTURE.md
 ├── examples/chain.json    # example rig config
 ├── assets/logo/           # banner, avatar, mark

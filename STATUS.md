@@ -7,11 +7,14 @@ current after every session** — last section first.
 
 - ✅ done · 🔨 in progress · ⏸ blocked (state why) · 📅 planned
 
-## Current state (2026-10-10)
+## Current state (2026-10-11)
 
 | Layer | Status |
 |---|---|
-| core: param/chain/config/osc/osc_io | ✅ builds, 27/27 test cases, 144/144 assertions |
+| core: param/chain/config/osc/osc_io | ✅ builds, 39/39 test cases, 253/253 assertions |
+| core: param time-series (static\|curve) parse/dump/merge/eval | ✅ local; **unpushed — CI pending** |
+| host: `weft-render` per-slot curve automation | ✅ local; **unpushed — CI pending** |
+| osc: source-address tracking + `sendTo()` reply routing | ✅ local (udp loopback test); **unpushed — CI pending** |
 | core: CMake + local build | ✅ (MSYS2 ucrt64 g++ 16.2, cmake 4.4, Ninja) |
 | core: CI (GH Actions, 3-OS) | ✅ green 3/3 |
 | host: JuceBackend (IPluginBackend over JUCE, VST3) | ✅ written, API-verified against JUCE 8.0.4 source |
@@ -21,10 +24,33 @@ current after every session** — last section first.
 | cli: `weft-render` offline audio→audio (item 8) | ✅ **CI GREEN** (run 38021890348, `df334c1`): param-push + stride-invariant render + CMake + CI render job (WAV selftest + `DryMix=0.5` gain-ratio assert on all 3 OSes). First compile red 3/3 (bare `int64` + const `createWriterFor`) fixed in the same commit |
 | prebuilt binaries (`release.yml`, `v*` tag) | ✅ **v0.1.5 published** (run 38050365557, `e8fbac9`): windows-x64 zip + linux-x64 tar.gz + macos-universal tar.gz, all verified by download+open; windows exe smoke-tested on this host (`--version` → `weft-render 0.1.5`). First release v0.1.1 had a raw-tar .zip; v0.1.2/3 packaging fixes; v0.1.4 fixed assets, v0.1.5 fixed missing version include — see log (2) |
 | packaging (item 8f) | ✅ root LICENSE (MIT), `--version` + CMake version stamp 0.1.0, README render docs + JUCE AGPLv3/commercial license correction |
-| docs (README/CONFIG/OSC/ARCHITECTURE) | ✅ |
+| docs (README/CONFIG/OSC/ARCHITECTURE) | ✅ re-synced to code 2026-10-11 (reply format, curve params, layout, target names) |
 | logo + name (Weft) | ✅ (assets/logo/) |
 
 ## Log
+
+- **2026-10-11 (1)** — **Param time-series (static|curve), render curve automation, OSC reply routing; docs re-synced.**
+  (a) *core time-series* (`054302f`): any config param may now be a static
+  number or `{"curve": [[frame:int≥0, value], ...]}` — frames are absolute
+  sample positions, sorted ascending, ≥1 keyframe, values clamped [0,1],
+  linear interp with end-clamping, frame 0 = load-time value. `ParamSpec`
+  (curve.hpp) wraps both; config parse/dump/merge handle it; `test_curve.cpp`
+  covers eval + validation.
+  (b) *weft-render curves* (`3d3c9fd`): the renderer evaluates per-slot
+  params at every block over the offline timeline, so curves automate params
+  during a render; static params unchanged.
+  (c) *OSC reply routing* (`feea2d2`): `OscUdp::poll(msg, &src)` captures
+  the sender (ip+port) of the last packet; `sendTo(msg, src)` replies to an
+  explicit address — a host can answer whichever client asked. Loopback test
+  in `test_osc_udp.cpp`.
+  (d) *docs re-sync*: test counts 39/39 + 253/253 everywhere; README plugin
+  target fixed to `weft_smoke_plugin_VST3`, stale `cli/` row removed
+  (renderer lives in `host/`), layout now lists `curve.hpp` + `host/`;
+  OSC.md reply format corrected (7 fixed tab columns + one per `listItems`
+  label — no `units` column); CONFIG.md documents the curve form;
+  ARCHITECTURE.md layering/roadmap/test list match the code.
+  Local: 39/39 test cases, 253/253 assertions (MSYS2 g++ 16.2). All three
+  code commits **unpushed — CI pending**.
 
 - **2026-10-10 (2)** — **Prebuilt binaries: `release.yml` + first releases.**
   README now leads with "Quick start (no compilation)". Release workflow:

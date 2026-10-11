@@ -31,7 +31,7 @@ message sets by *param name*; with `int, float` it sets by *param id*.
 | Address | Args | Meaning |
 |---|---|---|
 | `/reply/chain` | `s` | one line per slot: `index<TAB>id<TAB>path<TAB>enabled` |
-| `/reply/<slot>` | `s` per param | all params of the slot, one line each (sent as multiple messages): `id<TAB>title<TAB>value<TAB>min<TAB>max<TAB>steps<TAB>kind<TAB>units` |
+| `/reply/<slot>` | `s` per param | all params of the slot, one message each addressed to `/reply/<slot>/<param>`: line = `id<TAB>title<TAB>value<TAB>min<TAB>max<TAB>steps<TAB>kind`, plus one extra tab-separated column per `listItems` label (enum/chord params) |
 | `/reply/<slot>/<param>` | `f` | ack of a set: the param's current normalized value |
 | `/status` | `s` | host status string (e.g. `loaded: 3 slots`) |
 
@@ -64,6 +64,8 @@ message sets by *param name*; with `int, float` it sets by *param id*.
 
 - `OscUdp` (core/include/weft/osc_io.hpp): `bind()` to listen, `openOut()` to
   send, `poll()` is non-blocking — the host calls it from its timer.
+ `poll(msg, &src)` captures the sender address of the last packet and
+ `sendTo(msg, src)` replies to that explicit address (client-reply routing).
 - `osc_addr::classify()` maps a raw `OscMsg` to a `ParamAction`; unknown
   prefixes classify as `Unknown` (ignored, no error push).
 - The decoder rejects malformed input (unterminated strings, missing tag

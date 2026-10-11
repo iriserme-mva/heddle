@@ -44,14 +44,14 @@ plugin slots with per-param normalized values.
 | `plugin` | string | **yes** | — | path to `.vst3` / `.vst` |
 | `plugin_id` | string | no | — | VST3 class id / VST2 factory id for disambiguation |
 | `enabled` | bool | no | `true` | disabled slots keep their OSC address but load no plugin |
-| `params` | object | no | — | `name` → normalized value in `[0, 1]` |
+| `params` | object | no | — | `name` → static normalized value in `[0, 1]` or a curve object (see [time-series params](#time-series-params)) |
 
 ### Validation rules (parse fails with a message on violation)
 
 - root must be a JSON object; `chain` must be an array
 - every slot needs `id` and `plugin`
 - `id` values must be unique
-- param values must be numbers (clamped to `[0,1]` when applied)
+- param values must be a number or a curve object (values clamped to `[0,1]` when applied)
 - param names that don't exist on the plugin are kept in the config (they may
   appear after a hot-swap) but are not applied
 
@@ -71,6 +71,30 @@ per-session overrides):
 - slots: matched by `id`; override wins, but **param maps are unioned** with
   override winning per-param — base-only params survive
 - base-only slots are kept; override-only slots are appended
+
+## Time-series params
+
+Any param may be a **static** number (the backward-compatible form) or a
+**curve** — keyframes over the render timeline:
+
+```json
+"params": {
+  "Cutoff": { "curve": [[0, 0.2], [45000, 0.8], [90000, 0.3]] }
+}
+```
+
+- Keyframes are `[frame, value]` pairs: `frame` is an absolute sample
+  position from the start of the render, `value` is normalized (clamped to
+  `[0,1]`).
+- Frames must be integers `≥ 0`, sorted ascending (non-decreasing); at least
+  one keyframe is required.
+- Evaluation is linear interpolation between keyframes; before the first /
+  after the last keyframe the value is clamped to that keyframe's value.
+- Static values and curves may be mixed freely in one `params` object. The
+  value at frame 0 is the load-time value.
+
+`weft-render` evaluates per-slot params at every block, so a curve automates
+the param across the render (static params are unchanged).
 
 ## Example
 

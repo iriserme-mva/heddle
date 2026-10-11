@@ -11,17 +11,20 @@ time-series params).
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│  host/ (JUCE)                       cli/ (planned)        │
+│  host/ (JUCE)                                              │
 │  - JUCE VST2/3 backend (IPluginBackend)                    │
-│  - app main loop, OSC sockets, GUI (IO linking)            │
-│  - ASIO / virtual-cable audio routing                      │
+│  - weft_smoke: headless load + param introspection CLI     │
+│  - weft-render: offline audio→audio renderer (WAV in/out)  │
+│  - (planned) full host app: OSC server + GUI (IO linking), │
+│    ASIO / virtual-cable audio routing                      │
 ├────────────────────────────────────────────────────────────┤
 │  core/  (platform-agnostic C++17, MIT)                     │
 │  - Param/ParamSet model        (param.hpp)                 │
+│  - time-series params, static|curve (curve.hpp)            │
 │  - Chain + IPluginBackend      (chain.hpp)                 │
 │  - JSON config parse/dump/merge (config.hpp)               │
 │  - OSC 1.0 codec + addressing (osc.hpp)                    │
-│  - UDP OSC transport          (osc_io.hpp)                 │
+│  - UDP OSC transport, source tracking (osc_io.hpp)         │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -87,15 +90,21 @@ Targeted, meaningful tests only (no throwaway filler):
 - `test_chain.cpp` — mock backend: load + configured-params-on-defaults,
   hot-apply reload accounting, reset, slot resolution (id and index),
   change propagation.
+- `test_curve.cpp` — curve parse/eval: clamping, interpolation, keyframe
+ ordering rules, static-vs-curve `ParamSpec`.
+- `test_osc_udp.cpp` — UDP loopback: bind/openOut/poll roundtrip, sender
+ capture, `sendTo()` reply routing.
 
 Build & test: CMake + `ctest` (doctest). CI: GitHub Actions, same commands.
 
 ## Roadmap (tracked in STATUS.md)
 
-1. **core** (done locally, CI pending) — model, chain, config, OSC, transport.
-2. **host/** — JUCE VST2/3 backend implementing `IPluginBackend`; app with
-   OSC server + minimal GUI; IO linking between chain in/out and system
-   devices (ASIO / virtual cables).
-3. **cli/** — offline `weft-cli config.json in.wav out.wav` with fixed params
-   and optional time-series files per param.
-4. **Polish** — docs, packaging, license review for the JUCE layer, samples.
+1. **core** (done, CI green) — model, chain, config, OSC, transport;
+   time-series params (static|curve) done locally, CI pending (unpushed).
+2. **host/** — JUCE VST3 backend implementing `IPluginBackend` (done, CI
+   green); `weft_smoke` introspection CLI (done, CI green); `weft-render`
+   offline audio→audio with static + curve params (done; curve automation
+   CI pending); full host app with OSC server + minimal GUI + IO linking
+   between chain in/out and system devices (ASIO / virtual cables) —
+   in progress.
+3. **Polish** — docs, packaging, license review for the JUCE layer, samples.
