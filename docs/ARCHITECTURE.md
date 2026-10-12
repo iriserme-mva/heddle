@@ -100,11 +100,10 @@ Build & test: CMake + `ctest` (doctest). CI: GitHub Actions, same commands.
 ## Roadmap (tracked in STATUS.md)
 
 1. **core** (done, CI green) — model, chain, config, OSC, transport;
-   time-series params (static|curve) done locally, CI pending (unpushed).
+   time-series params (static|curve) — done, CI green.
 2. **host/** — JUCE VST3 backend implementing `IPluginBackend` (done, CI
    green); `weft_smoke` introspection CLI (done, CI green); `weft-render`
-   offline audio→audio with static + curve params (done; curve automation
-   CI pending); full host app with OSC server + minimal GUI + IO linking
-   between chain in/out and system devices (ASIO / virtual cables) —
-   in progress.
+   offline audio→audio with static + curve params (done, CI green); full host
+   app with OSC server + minimal GUI + IO linking between chain in/out and
+   system devices (ASIO / virtual cables) — in progress.
 3. **Polish** — docs, packaging, license review for the JUCE layer, samples.

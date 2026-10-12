@@ -7,14 +7,14 @@ current after every session** — last section first.
 
 - ✅ done · 🔨 in progress · ⏸ blocked (state why) · 📅 planned
 
-## Current state (2026-10-11)
+## Current state (2026-10-12)
 
 | Layer | Status |
 |---|---|
 | core: param/chain/config/osc/osc_io | ✅ builds, 39/39 test cases, 253/253 assertions |
-| core: param time-series (static\|curve) parse/dump/merge/eval | ✅ local; **unpushed — CI pending** |
-| host: `weft-render` per-slot curve automation | ✅ local; **unpushed — CI pending** |
-| osc: source-address tracking + `sendTo()` reply routing | ✅ local (udp loopback test); **unpushed — CI pending** |
+| core: param time-series (static\|curve) parse/dump/merge/eval | ✅ **CI GREEN** (run 38220293171, all 3 OSes) |
+| host: `weft-render` per-slot curve automation | ✅ **CI GREEN** (run 38220293171: curve mean-gain 0.6875 assert on all 3 OSes) |
+| osc: source-address tracking + `sendTo()` reply routing | ✅ **CI GREEN** (run 38220293171, udp loopback test) |
 | core: CMake + local build | ✅ (MSYS2 ucrt64 g++ 16.2, cmake 4.4, Ninja) |
 | core: CI (GH Actions, 3-OS) | ✅ green 3/3 |
 | host: JuceBackend (IPluginBackend over JUCE, VST3) | ✅ written, API-verified against JUCE 8.0.4 source |
@@ -51,6 +51,12 @@ current after every session** — last section first.
   ARCHITECTURE.md layering/roadmap/test list match the code.
   Local: 39/39 test cases, 253/253 assertions (MSYS2 g++ 16.2). All three
   code commits **unpushed — CI pending**.
+  (e) *2026-10-12*: pushed (`530c94e` + 3 code commits). First CI run
+  (38209447580) failed 3/3 host jobs on a CI-script bug from `3d3c9fd`:
+  the curve-case `cfg2` dict in the render step's Python heredoc was missing
+  its closing brace — SyntaxError before `weft-render` ran (core green).
+  Fixed in `2ffe9b8` (one line; all 3 heredocs re-verified to compile,
+  YAML validated). Re-run **38220293171 GREEN 6/6**.
 
 - **2026-10-10 (2)** — **Prebuilt binaries: `release.yml` + first releases.**
   README now leads with "Quick start (no compilation)". Release workflow:
