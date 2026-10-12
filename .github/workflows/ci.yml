@@ -169,7 +169,7 @@ jobs:
           cfg2 = {"sample_rate": RATE, "block_size": 512,
                   "chain": [{"id": "gain", "plugin": plugin,
                              "enabled": True,
-                             "params": {"DryMix": {"curve": [[0, 0.5], [2048, 1.0]]}}}]
+                             "params": {"DryMix": {"curve": [[0, 0.5], [2048, 1.0]]}}}]}
           with open("render_curve.json", "w") as f:
               json.dump(cfg2, f)
           print("render config plugin =", plugin)
