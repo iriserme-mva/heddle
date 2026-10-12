@@ -50,10 +50,19 @@ evalParams(const std::vector<std::pair<std::string, ParamSpec>>& params,
     return out;
 }
 
+// OSC server settings for the live app / bridge. When port == 0 the OSC
+// server is disabled (offline render, or a backend that exposes no OSC).
+// See docs/OSC.md for the address scheme.
+struct OscConfig {
+    int port = 0;                         // 0 = disabled; else UDP port to bind
+    std::string bindHost = "127.0.0.1";   // interface the server binds to
+};
+
 struct ChainConfig {
     int sampleRate = 44100;
     int blockSize = 512;
     std::vector<SlotConfig> slots;
+    OscConfig osc;
 };
 
 // Backend: implemented by the JUCE host (real plugins) or the CLI (offline

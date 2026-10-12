@@ -98,6 +98,19 @@ bool parse(const std::string& jsonText, ChainConfig& out, std::string* err) {
         cfg.sampleRate = j["sample_rate"].get<int>();
     if (j.contains("block_size") && j["block_size"].is_number_integer())
         cfg.blockSize = j["block_size"].get<int>();
+    if (j.contains("osc") && j["osc"].is_object()) {
+        const json& o = j["osc"];
+        if (o.contains("port")) {
+            if (!o["port"].is_number_integer())
+                return fail("osc.port must be an integer");
+            const int port = o["port"].get<int>();
+            if (port < 0 || port > 65535)
+                return fail("osc.port must be in 0..65535");
+            cfg.osc.port = port;
+        }
+        if (o.contains("bind_host") && o["bind_host"].is_string())
+            cfg.osc.bindHost = o["bind_host"].get<std::string>();
+    }
     if (!j.contains("chain") || !j["chain"].is_array())
         return fail("missing array 'chain'");
     std::vector<std::string> seen;
@@ -146,6 +159,13 @@ std::string dump(const ChainConfig& cfg) {
     json j;
     j["sample_rate"] = cfg.sampleRate;
     j["block_size"] = cfg.blockSize;
+    if (cfg.osc.port > 0 || cfg.osc.bindHost != OscConfig{}.bindHost) {
+        json o;
+        o["port"] = cfg.osc.port;
+        if (cfg.osc.bindHost != OscConfig{}.bindHost)
+            o["bind_host"] = cfg.osc.bindHost;
+        j["osc"] = o;
+    }
     j["chain"] = json::array();
     for (const auto& s : cfg.slots) {
         json slot;
@@ -165,6 +185,11 @@ ChainConfig merge(const ChainConfig& base, const ChainConfig& overrideCfg) {
     ChainConfig out = base;
     out.sampleRate = overrideCfg.sampleRate > 0 ? overrideCfg.sampleRate : base.sampleRate;
     out.blockSize = overrideCfg.blockSize > 0 ? overrideCfg.blockSize : base.blockSize;
+    // OSC: same convention as sampleRate/blockSize — 0 / default value in the
+    // override means "not specified", so the base keeps its server settings.
+    if (overrideCfg.osc.port > 0) out.osc.port = overrideCfg.osc.port;
+    if (overrideCfg.osc.bindHost != OscConfig{}.bindHost)
+        out.osc.bindHost = overrideCfg.osc.bindHost;
 
     // Build result slot list: keep base order, apply overrides by id, add new.
     std::vector<SlotConfig> result;

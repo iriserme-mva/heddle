@@ -118,6 +118,66 @@ TEST_CASE("merge: override wins per-slot and per-param, base extras kept") {
     CHECK(dlyDisabled);
 }
 
+TEST_CASE("parses osc section (port + bind_host)") {
+    ChainConfig cfg;
+    std::string err;
+    REQUIRE(config::parse(
+        R"({"osc": {"port": 9000, "bind_host": "0.0.0.0"}, "chain": []})",
+        cfg, &err));
+    CHECK(cfg.osc.port == 9000);
+    CHECK(cfg.osc.bindHost == "0.0.0.0");
+
+    // missing osc -> disabled defaults
+    REQUIRE(config::parse(R"({"chain": []})", cfg, &err));
+    CHECK(cfg.osc.port == 0);
+    CHECK(cfg.osc.bindHost == "127.0.0.1");
+}
+
+TEST_CASE("rejects bad osc port values") {
+    ChainConfig cfg;
+    std::string err;
+    CHECK_FALSE(config::parse(R"({"osc": {"port": -1}, "chain": []})", cfg, &err));
+    CHECK_FALSE(config::parse(R"({"osc": {"port": 70000}, "chain": []})", cfg, &err));
+    CHECK_FALSE(config::parse(R"({"osc": {"port": "9000"}, "chain": []})", cfg, &err));
+}
+
+TEST_CASE("dump round-trips osc settings") {
+    ChainConfig in, out;
+    std::string err;
+    REQUIRE(config::parse(R"({"osc": {"port": 9000}, "chain": []})", in, &err));
+    const std::string dumped = config::dump(in);
+    REQUIRE(config::parse(dumped, out, &err));
+    CHECK(out.osc.port == 9000);
+    CHECK(out.osc.bindHost == in.osc.bindHost);
+
+    // port 0 + default host -> no osc key emitted, still parses back
+    ChainConfig in2, out2;
+    REQUIRE(config::parse(R"({"chain": []})", in2, &err));
+    const std::string dumped2 = config::dump(in2);
+    REQUIRE(config::parse(dumped2, out2, &err));
+    CHECK(out2.osc.port == 0);
+    CHECK(dumped2.find("\"osc\"") == std::string::npos);
+}
+
+TEST_CASE("merge: override osc port wins, base kept when override silent") {
+    ChainConfig base, over, merged;
+    std::string err;
+    REQUIRE(config::parse(
+        R"({"osc": {"port": 9000, "bind_host": "0.0.0.0"}, "chain": []})", base, &err));
+
+    // override specifies a port -> wins; host stays from base
+    REQUIRE(config::parse(R"({"osc": {"port": 9001}, "chain": []})", over, &err));
+    merged = config::merge(base, over);
+    CHECK(merged.osc.port == 9001);
+    CHECK(merged.osc.bindHost == "0.0.0.0");
+
+    // override silent on osc -> base kept
+    REQUIRE(config::parse(R"({"chain": []})", over, &err));
+    merged = config::merge(base, over);
+    CHECK(merged.osc.port == 9000);
+    CHECK(merged.osc.bindHost == "0.0.0.0");
+}
+
 TEST_CASE("parseFile reads from disk") {
     const std::string path =
         (std::filesystem::temp_directory_path() / "weft_test_config.json").string();

@@ -12,6 +12,10 @@ namespace config {
 // {
 //   "sample_rate": 48000,          // optional, default 44100
 //   "block_size": 512,             // optional, default 512
+//   "osc": {                       // optional; live app / bridge OSC server
+//     "port": 9000,                // UDP port to bind (0 / absent = disabled)
+//     "bind_host": "127.0.0.1"     // optional, default "127.0.0.1"
+//   },
 //   "chain": [
 //     {
 //       "id": "comp",              // required, unique
