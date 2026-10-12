@@ -1,6 +1,6 @@
 // Targeted tests for the OSC layer: wire round-trips, address classification,
 // and the param-surface -> OSC mapping.
-#define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+#define DOCTEST_CONFIG_IMPLEMENT
 #include "doctest.h"
 
 #include "weft/osc.hpp"
