@@ -38,16 +38,45 @@ using namespace std::chrono_literals;
 namespace {
 
 std::string testName(const char* base) {
-  // Per-run suffix (PID + monotonic ns) so leftovers from other runs or other
-  // concurrently-spawned test binaries can never collide on a ring name.
+  // Short, collision-proof per-name suffix.
+  //
+  // POSIX shared-memory names are capped at 31 chars (POSIX_NAME_MAX) and every
+  // ring is prefixed with "/weft.ring." (11 chars), so the sanitized name must
+  // stay <= 20 chars. The old PID + full nanosecond-timestamp scheme produced
+  // names longer than that and broke shm_open() on macOS with ENAMETOOLONG
+  // (errno 63); Linux tmpfs tolerates 255, which is why only macOS showed it.
+  //
+  // Instead we emit a fixed-width token:
+  //   base  - the test-case tag (always "x" at the call sites) for log clarity
+  //   salt  - 4 hex chars from FNV-1a(pid, process start time); constant for the
+  //           process, and unique across processes and across PID reuse
+  //   seq   - per-process monotonically increasing counter, unique within a run
+  // Worst case = "/weft.ring." (11) + "partial_" (8) + "x_" (2) + salt (4) + "_" (1)
+  // + seq (2) = 28 chars, under macOS's 31-char shm name limit (the old 34-char
+  // PID+ns names triggered ENAMETOOLONG).
+  static const std::string salt = [] {
 #ifdef _WIN32
-  const std::string pid = std::to_string(static_cast<long long>(::GetCurrentProcessId()));
+    const unsigned long long pid = static_cast<unsigned long long>(::GetCurrentProcessId());
 #else
-  const std::string pid = std::to_string(static_cast<long long>(::getpid()));
+    const unsigned long long pid = static_cast<unsigned long long>(::getpid());
 #endif
-  const std::string ns =
-      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-  return std::string(base) + "_" + pid + "_" + ns;
+    const unsigned long long ns =
+        std::chrono::steady_clock::now().time_since_epoch().count();
+    unsigned int h = 2166136261u;  // FNV-1a over (pid, ns)
+    const unsigned long long v[2] = {pid, ns};
+    for (const unsigned long long x : v)
+      for (int i = 0; i < 8; ++i) {
+        h ^= static_cast<unsigned int>((x >> (8 * i)) & 0xffu);
+        h *= 16777619u;
+      }
+    char buf[8];
+    std::snprintf(buf, sizeof buf, "%04x", h & 0xffffu);
+    return std::string(buf);
+  }();
+  static std::atomic<unsigned> seq {0};
+  std::string t = std::string(base) + "_" + salt + "_" + std::to_string(seq.fetch_add(1));
+  if (t.size() > 20) t.resize(20);  // defensive clamp; the fixed format never reaches it
+  return t;
 }
 
 // Deterministic pattern: global frame g = startFrame + i, channel c -> (g*31 + c).
@@ -148,13 +177,6 @@ ChildProc spawnChild(const std::vector<std::string>& args) {
   cp.pid = pid;
 #endif
   return cp;
-}
-
-// Launch self with args, wait for it, return its exit code (-1 on spawn error).
-int launchChild(const std::vector<std::string>& args) {
-  ChildProc cp = spawnChild(args);
-  if (!cp.valid()) return -1;
-  return cp.wait();
 }
 
 // Cross-process child roles:
@@ -494,8 +516,14 @@ TEST_CASE("ring: cross-process, child producer / parent consumer") {
   AudioRing r = AudioRing::create(name, 256, ch, 48000);
   REQUIRE(r.valid());
   REQUIRE(selfPath().size() > 0);
-  const int rc = launchChild({name, std::to_string(frames), std::to_string(ch), "producer"});
-  REQUIRE(rc == 0);
+  // Start the producer WITHOUT waiting: it fills the ring in chunks and keeps
+  // trying to write the rest until its 15 s deadline. If we waited for it here
+  // (blocking launchChild), the parent would never drain, the ring would stay
+  // full at `cap` frames, the producer would time out with "wrote only 256 of
+  // 5000", and this test would deadlock into a failure.
+  ChildProc child = spawnChild({name, std::to_string(frames), std::to_string(ch), "producer"});
+  REQUIRE(child.valid());
+  // Drain everything the producer has written, in pattern order.
   std::vector<float> out(64 * ch);
   int64_t pos = 0;
   const auto deadline = std::chrono::steady_clock::now() + 15s;
@@ -512,6 +540,9 @@ TEST_CASE("ring: cross-process, child producer / parent consumer") {
     }
   }
   CHECK(pos == static_cast<int64_t>(frames));
+  // The child exits 0 only if it wrote all frames (which requires the parent
+  // to have kept draining, exactly as above).
+  CHECK(child.wait() == 0);
 }
 
 TEST_CASE("ring: cross-process, parent producer / child consumer") {
