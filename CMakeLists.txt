@@ -42,6 +42,12 @@ target_link_libraries(weft_core_tests PRIVATE weft_core)
 target_include_directories(weft_core_tests PRIVATE third_party/doctest)
 add_test(NAME weft_core_tests COMMAND weft_core_tests)
 
+# ---- latency probe (t4) -----------------------------------------------------
+# ring_latency: instrumented added-latency benchmark for the shared-memory
+# ring (in-process bench + cross-process real-time paced measurement).
+add_executable(weft_ring_latency core/tools/ring_latency.cpp)
+target_link_libraries(weft_ring_latency PRIVATE weft_core)
+
 # ---- JUCE host layer (opt-in) ----------------------------------------------
 option(WEFT_BUILD_HOST "Build the JUCE host layer (VST3 plugin + smoke CLI)" OFF)
 if(WEFT_BUILD_HOST)
