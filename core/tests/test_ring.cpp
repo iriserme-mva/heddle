@@ -23,6 +23,10 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #else
 #include <sys/wait.h>
 #include <unistd.h>
@@ -34,9 +38,16 @@ using namespace std::chrono_literals;
 namespace {
 
 std::string testName(const char* base) {
-  // Per-run suffix so leftovers from other runs never collide.
-  return std::string(base) + "_" +
-         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+  // Per-run suffix (PID + monotonic ns) so leftovers from other runs or other
+  // concurrently-spawned test binaries can never collide on a ring name.
+#ifdef _WIN32
+  const std::string pid = std::to_string(static_cast<long long>(::GetCurrentProcessId()));
+#else
+  const std::string pid = std::to_string(static_cast<long long>(::getpid()));
+#endif
+  const std::string ns =
+      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+  return std::string(base) + "_" + pid + "_" + ns;
 }
 
 // Deterministic pattern: global frame g = startFrame + i, channel c -> (g*31 + c).
@@ -61,6 +72,11 @@ std::string selfPath() {
   char buf[1024] = {0};
   ::GetModuleFileNameA(nullptr, buf, 1023);
   return buf;
+#elif defined(__APPLE__)
+  char buf[1024] = {0};
+  uint32_t size = sizeof(buf);
+  if (_NSGetExecutablePath(buf, &size) == 0) return std::string(buf);
+  return std::string();
 #else
   char buf[1024] = {0};
   ssize_t n = ::readlink("/proc/self/exe", buf, 1023);
@@ -452,11 +468,18 @@ TEST_CASE("ring: thread stress (in-process, 200k frames)") {
         break;
       }
       pos += static_cast<int64_t>(got);
-    } else if (!done.load() && std::chrono::steady_clock::now() < deadline) {
-      std::this_thread::yield();
-    } else {
-      break;
+      continue;
     }
+    // Nothing readable right now.
+    if (std::chrono::steady_clock::now() > deadline) break;  // out of time
+    if (done.load(std::memory_order_acquire)) {
+      // Producer finished: every frame is in the ring. The read() above may
+      // have seen a stale head (it ran before `done` was observed), so loop
+      // back and drain instead of giving up — the next read() observes the
+      // final head. No sleep: this resolves within one or two iterations.
+      continue;
+    }
+    std::this_thread::yield();  // still producing; back off briefly
   }
   producer.join();
   CHECK(ok);

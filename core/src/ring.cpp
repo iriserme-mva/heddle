@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <new>
 #include <thread>
@@ -247,6 +248,10 @@ AudioRing AudioRing::create(const std::string& name, size_t capacityFrames, int 
   if (impl->platformName.size() > 120) impl->platformName.resize(120);
   impl->fd = ::shm_open(impl->platformName.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
   if (impl->fd < 0) {
+    // Surface the real errno (create() failures are otherwise silent).
+    std::fprintf(stderr, "[ring] create(\"%s\"): shm_open failed: %s (errno=%d, name=%s, len=%zu)\n",
+                 impl->name.c_str(), std::strerror(errno), errno,
+                 impl->platformName.c_str(), impl->platformName.size());
     if (errno == EEXIST) {
       ::shm_unlink(impl->platformName.c_str());
       if (err) *err = "a ring named '" + impl->name + "' already exists";
@@ -257,6 +262,8 @@ AudioRing AudioRing::create(const std::string& name, size_t capacityFrames, int 
   }
   if (::ftruncate(impl->fd, static_cast<off_t>(total)) != 0) {
     if (err) *err = "ftruncate failed: " + std::string(std::strerror(errno));
+    std::fprintf(stderr, "[ring] create(\"%s\"): ftruncate failed: %s (errno=%d, size=%zu)\n",
+                 impl->name.c_str(), std::strerror(errno), errno, total);
     ::shm_unlink(impl->platformName.c_str());
     return AudioRing();
   }
@@ -264,6 +271,8 @@ AudioRing AudioRing::create(const std::string& name, size_t capacityFrames, int 
   if (impl->addr == MAP_FAILED) {
     impl->addr = nullptr;
     if (err) *err = "mmap failed: " + std::string(std::strerror(errno));
+    std::fprintf(stderr, "[ring] create(\"%s\"): mmap failed: %s (errno=%d, size=%zu)\n",
+                 impl->name.c_str(), std::strerror(errno), errno, total);
     ::shm_unlink(impl->platformName.c_str());
     return AudioRing();
   }
@@ -345,7 +354,7 @@ AudioRing AudioRing::open(const std::string& name, std::string* err, int timeout
   if (impl->platformName.size() > 120) impl->platformName.resize(120);
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
   for (;;) {
-    impl->fd = ::shm_open(impl->platformName.c_str(), O_RDWR);
+    impl->fd = ::shm_open(impl->platformName.c_str(), O_RDWR, 0);
     if (impl->fd >= 0) break;
     if (errno != ENOENT) {
       if (err) *err = "shm_open failed: " + std::string(std::strerror(errno));
@@ -420,7 +429,7 @@ bool AudioRing::exists(const std::string& name) {
 #else
   std::string p = "/weft.ring." + s;
   if (p.size() > 120) p.resize(120);
-  int fd = ::shm_open(p.c_str(), O_RDWR);
+  int fd = ::shm_open(p.c_str(), O_RDWR, 0);
   if (fd >= 0) {
     ::close(fd);
     return true;
