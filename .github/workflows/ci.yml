@@ -117,17 +117,16 @@ jobs:
           # plugin's own params PLUS that injected one. Require the two real
           # params to be present with correct values; tolerate injected extras
           # (Bypass is a JUCE-injected bool, stepCount 2).
-          assert {"DryMix", "Mode"} <= names, names
-          dm = next(p for p in d["params"] if p["title"] == "DryMix")
-          md = next(p for p in d["params"] if p["title"] == "Mode")
-          # VST3 params are float32: 0.8f round-trips through JSON as
-          # 0.800000011920929, so compare with a tolerance, not exact ==.
-          assert dm["stepCount"] == 0 and abs(dm["defaultValue"] - 0.8) < 1e-5, dm
-          # Raw VST3 ParameterInfo carries no value strings — JUCE's
-          # VST3Parameter::getAllValueStrings() returns {} — so a choice
-          # param hosted through the VST3 format reports listItems == [].
-          # Assert the discrete step count instead of the label list.
-          assert md["stepCount"] == 3 and md["listItems"] == [], md
+          assert {"Gain", "PWM pct"} <= names, names
+          gp = next(p for p in d["params"] if p["title"] == "Gain")
+          pw = next(p for p in d["params"] if p["title"] == "PWM pct")
+          # VST3 params are float32, so compare the defaults with a tolerance,
+          # not exact ==. Both params are continuous (stepCount 0): "PWM pct"
+          # is a continuous 0..1 duty cycle (the title carries the percent
+          # meaning), NOT a stepped choice — a stepped NormalisableRange would
+          # surface a non-zero stepCount here and fail the test.
+          assert gp["stepCount"] == 0 and abs(gp["defaultValue"] - 1.0) < 1e-5, gp
+          assert pw["stepCount"] == 0 and abs(pw["defaultValue"] - 1.0) < 1e-5, pw
           print("SMOKE OK")
           EOF
 
@@ -137,16 +136,22 @@ jobs:
           # The renderer must run the VST3 through the offline path at the
           # input file's sample rate, with the config's `params:` block pushed
           # onto the live instance. We prove the latter with a GAIN RATIO:
-          # input is a constant 0.5 tone, the config sets DryMix=0.5 (a
-          # NON-default — the plugin default is 0.8), so the rendered output
-          # must be input * 0.5. If the params block were ever ignored, the
-          # default 0.8 gain would show through and the ratio would be 0.8.
+          # the plugin's DSP is out = in * Gain * gate, where gate is a
+          # fixed-period (1024-sample) on/off square wave whose duty cycle is
+          # the "PWM pct" param. For a constant-amplitude input the mean
+          # output / mean input ratio is exactly Gain * duty. Both config
+          # values below are NON-defaults (plugin defaults are 1.0 / 1.0): if
+          # either were ignored the ratio would be 0.5 (duty ignored) or
+          # 0.625 (Gain ignored), not 0.3125.
           render=$(find build -name 'weft-render' -o -name 'weft-render.exe' | head -n1)
           [ -n "$render" ] && [ -x "$render" ] || { echo "::error::weft-render binary not found"; exit 1; }
 
           # Deterministic input WAV (2048-frame stereo 44100 Hz 16-bit, constant
-          # 0.5) + a one-slot chain config with DryMix=0.5 pointing at the built
-          # VST3 bundle located by the 'loc' step.
+          # 0.5) + a one-slot chain config with Gain=0.5 and "PWM pct"=0.625
+          # pointing at the built VST3 bundle located by the 'loc' step.
+          # The plugin's gate period is 1024 samples, so the 2048-frame file
+          # is exactly two full periods: duty 0.625 -> 640 of 1024 samples ON
+          # per period, and mean(out)/mean(in) = 0.5 * 0.625 = 0.3125.
           python3 - "${{ steps.loc.outputs.path }}" <<'PYEOF'
           import json, struct, sys
           plugin = sys.argv[1]
@@ -162,14 +167,17 @@ jobs:
               f.write(b"data" + struct.pack("<I", len(data)) + data)
           cfg = {"sample_rate": RATE, "block_size": 512,
                  "chain": [{"id": "gain", "plugin": plugin,
-                            "enabled": True, "params": {"DryMix": 0.5}}]}
+                            "enabled": True,
+                            "params": {"Gain": 0.5, "PWM pct": 0.625}}]}
           with open("render_chain.json", "w") as f:
               json.dump(cfg, f)
-          # Curve form: DryMix ramps 0.5 -> 1.0 over the full 2048-frame file.
+          # Curve form: Gain ramps 0.5 -> 1.0 over the full 2048-frame file,
+          # gate wide open ("PWM pct" = 1.0, duty = 1.0 -> never gates).
           cfg2 = {"sample_rate": RATE, "block_size": 512,
                   "chain": [{"id": "gain", "plugin": plugin,
                              "enabled": True,
-                             "params": {"DryMix": {"curve": [[0, 0.5], [2048, 1.0]]}}}]}
+                             "params": {"Gain": {"curve": [[0, 0.5], [2048, 1.0]]},
+                                        "PWM pct": 1.0}}]}
           with open("render_curve.json", "w") as f:
               json.dump(cfg2, f)
           print("render config plugin =", plugin)
@@ -178,7 +186,11 @@ jobs:
           "$render" in.wav render_chain.json out.wav --bits 16 || { echo "::error::weft-render failed"; exit 1; }
 
           # Verify: output is 2048 frames / 44100 Hz / stereo / 16-bit PCM, and
-          # the gain ratio out/in is 0.5 (== the configured DryMix).
+          # the gain ratio out/in is 0.3125 (= configured Gain 0.5 x
+          # configured "PWM pct" 0.625 — the gate is exactly half-ish ON per
+          # 1024-sample period, and the 2048-frame file holds 2 full periods).
+          # If either config param were ignored the ratio would be 0.5 or
+          # 0.625; if BOTH were ignored (defaults 1.0/1.0) it would be 1.0.
           python3 - <<'PYEOF'
           import struct
 
@@ -211,15 +223,16 @@ jobs:
           out_mean = sum(out_s) / len(out_s)
           gain = out_mean / in_mean
           print(f"input mean {in_mean:.2f}  output mean {out_mean:.2f}  gain {gain:.4f}")
-          assert abs(gain - 0.5) < 0.01, gain   # 0.5 == configured DryMix
+          assert abs(gain - 0.3125) < 0.01, gain   # 0.5 (Gain) * 0.625 (PWM pct)
           print("RENDER OK")
           PYEOF
 
           # ---- curve case --------------------------------------------------
-          # DryMix ramps 0.5 -> 1.0 over the whole 2048-frame file. At each
+          # Gain ramps 0.5 -> 1.0 over the whole 2048-frame file. At each
           # 512-frame block start the curve evaluates to 0.5, 0.625, 0.75,
           # 0.875, and the plugin applies that gain per block (it reads the
-          # param live in processBlock). Mean gain = 0.6875. If curve
+          # param live in processBlock). "PWM pct" is held at 1.0 (gate wide
+          # open), so it cannot mask a failure. Mean gain = 0.6875. If curve
           # automation were ignored — stuck at the load-time value (0.5) or at
           # the last value (1.0) — the mean would be 0.5 or 1.0, not 0.6875.
           "$render" in.wav render_curve.json out_curve.wav --bits 16 || { echo "::error::weft-render (curve) failed"; exit 1; }

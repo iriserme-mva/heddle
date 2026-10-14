@@ -7,7 +7,7 @@ current after every session** — last section first.
 
 - ✅ done · 🔨 in progress · ⏸ blocked (state why) · 📅 planned
 
-## Current state (2026-10-12)
+## Current state (2026-10-14)
 
 | Layer | Status |
 |---|---|
@@ -18,7 +18,8 @@ current after every session** — last section first.
 | core: CMake + local build | ✅ (MSYS2 ucrt64 g++ 16.2, cmake 4.4, Ninja) |
 | core: CI (GH Actions, 3-OS) | ✅ green 3/3 |
 | host: JuceBackend (IPluginBackend over JUCE, VST3) | ✅ written, API-verified against JUCE 8.0.4 source |
-| host: test VST3 plugin (WeftSmokePlugin) + smoke CLI | ✅ written (DryMix float 0..1 def 0.8; Mode choice Soft/Hard/Off) |
+| host: test VST3 plugin (WeftSmokePlugin) + smoke CLI | ✅ written (testvst: Gain float 0..1 def 1.0; PWM pct float 0..1 def 1.0 = 1024-sample on/off gate duty cycle) |
+| host: `weft-host` standalone live chain host (headless-ready, OSC-driven) | ✅ **CI GREEN** (run 38525679263, `0fdb134`): `host_main.cpp` 780-line rewrite; null-mode + OSC 4/4 local; see log 2026-10-14 (1) |
 | host: CMake (JUCE 8.0.4 sha256-pinned, opt-in WEFT_BUILD_HOST) | ✅ pushed; FORMATS VST3 wrapper fix pending CI verification |
 | host: CI (3-OS matrix + smoke param assertions) | ✅ **GREEN 6/6** (run 37984831984, `f6c9d22`): plugin loads, no crash, smoke assertions pass on Linux/macOS/Windows; `crash_diag` instrumentation removed |
 | cli: `weft-render` offline audio→audio (item 8) | ✅ **CI GREEN** (run 38021890348, `df334c1`): param-push + stride-invariant render + CMake + CI render job (WAV selftest + `DryMix=0.5` gain-ratio assert on all 3 OSes). First compile red 3/3 (bare `int64` + const `createWriterFor`) fixed in the same commit |
@@ -28,6 +29,62 @@ current after every session** — last section first.
 | logo + name (Weft) | ✅ (assets/logo/) |
 
 ## Log
+
+- **2026-10-14 (1)** — **t3inc1: `weft-host` standalone live chain host (headless-ready, OSC-driven).**
+  Full clean rewrite of `host/src/host_main.cpp` (780 lines): the live chain
+  host loads a config, instantiates one plugin instance per slot, and runs
+  either with a real audio device or headless (null audio, software clock)
+  with OSC as the control surface — `/chain/query` → `/reply/chain`, set by
+  name (float) or by id (int+float) → `/reply/<slot>/<param>`,
+  `/chain/<slot>/reset` → `/status`, `/chain/quit` → exit, `/change/<slot>/
+  <param>` push on value change. JUCE 8 device control is
+  `addAudioCallback`/`removeAudioCallback` (no `start()`/`isDeviceRunning()`);
+  `JUCE_MODAL_LOOPS_PERMITTED=1` on the weft-host target. Verified local:
+  MSVC build OK, null-mode OSC check 4/4. Committed `0fdb134`, pushed; CI
+  run 38525679263 **completed success** (all 3 OSes).
+
+- **2026-10-14 (2)** — **testvst: smoke plugin DSP rewritten to Gain + PWM duty gate; CI render asserts rewritten to match.**
+  (a) *plugin* (`host/test_plugin/plugin.cpp`): the old DryMix/Mode smoke is
+  replaced by two continuous 0..1 params, both default 1.0 — `Gain` (linear
+  output gain) and `PWM pct` (duty cycle of a fixed-period 1024-sample on/off
+  gate; `out[n] = in[n] * Gain * gate[n]`). The gate phase is a member that
+  survives across `processBlock` calls (reset in `prepareToPlay`), so the
+  waveform is continuous across the host's 512-frame blocks and across
+  renderer blocks; the renderer calls `setProcessSpec` (→ `prepareToPlay`)
+  once before its block loop, so a render starts at phase 0. Params are read
+  live in `processBlock` (a cached copy would ignore config values pushed
+  after `prepareToPlay`). For constant-amplitude input, mean-out/mean-in =
+  Gain × duty, so the render job asserts that product and proves BOTH config
+  params reach the live instance (defaults are 1.0/1.0; ignoring either would
+  change the ratio).
+  (b) *CI* (`ci.yml`): smoke assertions now require `Gain` + `PWM pct`
+  present, both stepCount 0, default 1.0 (JUCE-injected Bypass still
+  tolerated). Render static case: input constant 0.5, config Gain=0.5 +
+  "PWM pct"=0.625 → expected ratio 0.3125 (2048-frame file = exactly two
+  1024-sample gate periods; 640 of 1024 ON each). Render curve case:
+  `Gain` ramps 0.5→1.0 over 2048 frames (block-start values 0.5/0.625/
+  0.75/0.875 → mean 0.6875) with "PWM pct"=1.0 (gate transparent, 1024/1024
+  ON) → expected ratio 0.6875.
+  (c) *Pitfall (compile red 1/1 locally)*: JUCE 8.0.4 `AudioParameterFloat`
+  has NO 1-arg display-lambda constructor — the overloads take either a
+  2-arg `stringFromValue` (`String(float,int)`), an
+  `AudioParameterFloatAttributes` object, or no 5th arg. The attempted
+  `[](float v){...}` lambda matched none → C2661. Also: a `parameterLabel`
+  is appended to the name the host sees via `getName()`, which would break
+  the host's exact-title OSC match on `PWM pct` — so the param has no label
+  and the title itself carries the unit.
+  (d) *Local verification (all green before push)*: full MSVC build OK;
+  core 57/57; smoke JSON shows both params stepCount 0 def 1.0; render
+  static ratio 0.312481≈0.3125, curve 0.687481≈0.6875 (16-bit quantization
+  <1e-4); headless weft-host + OSC 4/4 (query, set-by-name Gain, set-by-id
+  "PWM pct" — the space round-trips because the core OSC tokenizer splits on
+  '/' only —, reset). Product name `WeftSmokePlugin` + target
+  `weft_smoke_plugin` kept unchanged so every `find` pattern in CI still
+  resolves.
+  (e) *Backfill*: `t3inc1` (`0fdb134`, `weft-host` headless + OSC rewrite,
+  780-line `host_main.cpp`) was committed + pushed 2026-10-14 and CI run
+  38525679263 went green, but its STATUS.md row/entry was never written —
+  recorded in the table now.
 
 - **2026-10-11 (1)** — **Param time-series (static|curve), render curve automation, OSC reply routing; docs re-synced.**
   (a) *core time-series* (`054302f`): any config param may now be a static
