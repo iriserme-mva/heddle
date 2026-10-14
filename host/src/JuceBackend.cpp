@@ -267,4 +267,22 @@ int JuceBackend::numLoadedSlots() const {
     return static_cast<int>(slots_.size());
 }
 
+float JuceBackend::paramValue(const std::string& slotId, uint32_t id) const {
+    for (const auto& slot : slots_) {
+        if (slot.id != slotId || slot.instance == nullptr)
+            continue;
+        const auto params = slot.instance->getParameters();
+        for (int i = 0; i < params.size(); ++i) {
+            const auto* hosted =
+                dynamic_cast<const juce::HostedAudioProcessorParameter*>(params[i]);
+            if (hosted == nullptr)
+                continue;
+            if (paramIdFromJuce(hosted->getParameterID(), 0) == id)
+                return params[i]->getValue();
+        }
+        return -1.f;  // slot found but param id unknown
+    }
+    return -1.f;  // slot not found
+}
+
 }  // namespace weft

@@ -64,6 +64,14 @@ public:
 
     int numLoadedSlots() const;
 
+    // Read the live (normalized 0..1) value of a plugin parameter by model
+    // param id, so the host can detect plugin-internal changes (automation,
+    // an injected Bypass, an in-plugin editor change) that this backend does
+    // not surface as host-change events. Returns -1 if the slot or param is
+    // not found. Safe to call from the message thread: JUCE parameters are
+    // thread-safe for reads.
+    float paramValue(const std::string& slotId, uint32_t id) const;
+
 private:
     struct Slot {
         std::string id;

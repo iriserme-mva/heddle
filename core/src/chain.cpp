@@ -106,6 +106,11 @@ void Chain::resetToDefaults() {
         for (auto& p : ps.params) p.value = p.defaultValue;
 }
 
+void Chain::resetSlot(int slotIndex) {
+    if (slotIndex < 0 || slotIndex >= (int)sets_.size()) return;
+    for (auto& p : sets_[slotIndex].params) p.value = p.defaultValue;
+}
+
 int Chain::resolveSlot(const std::string& token) const {
     if (token.empty()) return -1;
     bool numeric = true;

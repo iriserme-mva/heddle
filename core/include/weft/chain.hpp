@@ -103,6 +103,11 @@ public:
 
     void resetToDefaults();
 
+    // Reset one slot's param model to its plugin defaults (no-op if the index
+    // is out of range). Like resetToDefaults() this only touches the model —
+    // a live host must still push the values into the plugin instance.
+    void resetSlot(int slotIndex);
+
     // Resolve a slot token: numeric index ("0") or slot id ("comp"). -1 if not found.
     int resolveSlot(const std::string& token) const;
 
