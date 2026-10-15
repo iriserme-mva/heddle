@@ -107,6 +107,8 @@ target_link_libraries(weft-host
         weft_core
         juce::juce_core
         juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
         juce::juce_audio_devices
         juce::juce_audio_processors
 )

@@ -1,7 +1,7 @@
 // weft-host — the standalone live JUCE VST3 chain host.
 //
 //   weft-host <chain.json> [--audio null|system] [--device NAME]
-//             [--osc-port N] [--duration SECONDS] [--version]
+//             [--osc-port N] [--duration SECONDS] [--gui] [--version]
 //
 // Loads the chain described by the config JSON, instantiates the plugins
 // via JuceBackend, and runs them live:
@@ -52,6 +52,14 @@
 // shape weft_smoke / weft-render already build with in CI (no
 // JUCEApplication, no window). Timers are serviced by the
 // MessageManager dispatch loop in run().
+//
+// --gui (default OFF)
+// -------------------
+// Opens a JUCE window listing every slot and its params as sliders. The
+// sliders set params through the same path as the OSC set (Chain::setParam,
+// user-locked against curve automation); the window tracks plugin-side
+// changes via the same 5 ms refreshModel() poll. Off by default: headless
+// OSC-only is the normal mode; the window is for interactive use.
 
 #include <algorithm>
 #include <atomic>
@@ -72,6 +80,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
+#include <juce_gui_basics/juce_gui_basics.h>
 #include <juce_core/juce_core.h>
 
 #include "JuceBackend.hpp"
@@ -154,6 +163,9 @@ private:
 
 }  // namespace
 
+class WeftHostWindow;  // --gui window; defined after WeftHost (its content
+                       // callbacks need the complete WeftHost type)
+
 // ----------------------------------------------------------------------------
 // WeftHost
 // ----------------------------------------------------------------------------
@@ -193,6 +205,16 @@ public:
             osc_.sendTo(OscMsg::make(osc_addr::makeChangeAddr(slotIndex, p.title), p.value),
                         lastSrc_);
         });
+
+        // Open the GUI window BEFORE starting the audio thread. The GUI
+        // constructor takes chainLock_ once (blocking, ScopedLock) to build
+        // its initial snapshot; the audio thread (null software clock or real
+        // device) hammers chainLock_ with high-frequency try-locks every block
+        // and would starve that one-shot acquisition (observed: ctor blocked
+        // on the lock forever). After startup the GUI only ever uses
+        // non-blocking try-locks from its timer, so the order is safe.
+        if (args_.gui)
+            guiStart();  // open the param-control window (message thread)
 
         if (args_.audioMode == "system") {
             if (!initAudioDevice(&err)) {
@@ -318,7 +340,19 @@ public:
             handleOsc(msg, src);
         }
         refreshModel();
+        guiPull();
     }
+
+    // The --gui content reads the chain model directly (message thread,
+    // chainLock_ held by the caller); see ChainGuiContent below.
+    friend class ChainGuiContent;
+
+    // ---- --gui entry points (message thread) --------------------------------
+    // hostGuiSet: set a param by name the same way the OSC set path does and
+    // mark it user-locked (manual control outranks curve automation).
+    bool hostGuiSet(int slotIndex, const std::string& name, double norm);
+    // requestQuit: window close (same as /chain/quit).
+    void requestQuit();
 
 private:
     // ---- args ---------------------------------------------------------------
@@ -329,6 +363,7 @@ private:
         int oscPort = 0;            // 0 = not given on the CLI
         bool printVersion = false;
         double durationSec = 0.0;
+        bool gui = false;           // --gui: open the param-control window
     };
 
     bool parseArgs(int argc, char** argv) {
@@ -359,6 +394,8 @@ private:
                 const char* v = need("--duration");
                 if (v == nullptr) return false;
                 args_.durationSec = std::atof(v);
+            } else if (a == "--gui") {
+                args_.gui = true;
             } else if (a == "--help" || a == "-h") {
                 usage(argv[0]);
                 args_.printVersion = true;  // handled in run(): exit 0
@@ -393,9 +430,11 @@ private:
     static void usage(const char* prog) {
         std::fprintf(stderr,
             "usage: %s <chain.json> [--audio null|system] [--device NAME]\n"
-            "       [--osc-port N] [--duration SECONDS] [--version]\n"
+            "       [--osc-port N] [--duration SECONDS] [--gui] [--version]\n"
             "  Live VST3 chain host (JUCE). OSC control over UDP; the config's\n"
-            "  osc.port/bind_host are the defaults, --osc-port overrides the port.\n",
+            "  osc.port/bind_host are the defaults, --osc-port overrides the port.\n"
+            "  --gui opens a window with per-slot param sliders (default off,\n"
+            "  headless).\n",
             prog);
     }
 
@@ -720,25 +759,14 @@ private:
         }
     }
 
+    // ---- GUI (--gui; defined after the window classes at the bottom) ---------
+    void guiStart();
+    void guiPull();
+    void guiContentChanged();
+
     // ---- teardown (idempotent) -------------------------------------------------
-    void stopAll() {
-        if (stopped_)
-            return;
-        stopped_ = true;
-        stopTimer();
-        if (clock_ != nullptr) {
-            clock_->stopClock();
-            clock_->stopThread(3000);
-            clock_.reset();
-        }
-        // Join the device audio thread so no callback can touch the backend
-        // while it is destroyed.
-        if (adm_.getCurrentAudioDevice() != nullptr)
-            adm_.removeAudioCallback(this);
-        osc_.close();
-        running_ = false;
-        logInfo("stopped");
-    }
+    void stopAll();  // out-of-line: guiWindow_ needs the complete
+                     // WeftHostWindow type (defined at the bottom).
 
     // ---- members ---------------------------------------------------------------
     Args args_;
@@ -767,10 +795,337 @@ private:
     std::map<std::pair<int, std::string>, float> prevCurve_;
     std::map<std::pair<int, std::string>, bool> userLocked_;
 
+    std::unique_ptr<WeftHostWindow> guiWindow_;
+
     std::atomic<bool> quit_{false};
     bool running_ = false;
     bool stopped_ = false;
 };
+
+// ----------------------------------------------------------------------------
+// --gui: Row - one line in the param list (a slot header, or a param slider)
+// ----------------------------------------------------------------------------
+// A param row copies the param's display metadata (title/units/range/labels)
+// at build time, so it never points into the chain model (which is replaced on
+// load/apply). The slider's onValueChange routes through
+// WeftHost::hostGuiSet (the OSC set path, user-locked); the row's value is
+// re-synced from the model by ChainGuiContent::tick() every 5 ms tick.
+class Row : public juce::Component {
+public:
+    // Param row.
+    Row(WeftHost& host, int slotIndex, const Param& p)
+        : juce::Component("weft-row"),
+          host_(&host),
+          slotIndex_(slotIndex),
+          title_(p.title),
+          units_(p.units),
+          minRaw_(p.minValue),
+          maxRaw_(p.maxValue),
+          stepCount_(p.stepCount) {
+        listItems_ = p.listItems;
+
+        label.setText(title_, juce::dontSendNotification);
+        label.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::plain)));
+        label.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(label);
+
+        const double interval = (p.stepCount > 1) ? (1.0 / (p.stepCount - 1)) : 0.0;
+        slider.setRange(0.0, 1.0, interval);
+        slider.setSliderStyle(juce::Slider::LinearHorizontal);
+        slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 90, 22);
+        slider.setValue(p.value, juce::dontSendNotification);
+        slider.textFromValueFunction = [this](double norm) -> juce::String {
+            return displayText(norm);
+        };
+        slider.valueFromTextFunction = [this](const juce::String& text) -> double {
+            return parseText(text);
+        };
+        slider.onValueChange = [this]() {
+            if (host_ != nullptr)
+                host_->hostGuiSet(slotIndex_, title_, slider.getValue());
+        };
+        addAndMakeVisible(slider);
+    }
+
+    // Slot header row.
+    explicit Row(const juce::String& text)
+        : juce::Component("weft-header"),
+          host_(nullptr),
+          isHeader_(true) {
+        label.setText(text, juce::dontSendNotification);
+        label.setFont(juce::Font(juce::FontOptions(13.5f, juce::Font::bold)));
+        label.setJustificationType(juce::Justification::centredLeft);
+        addAndMakeVisible(label);
+    }
+
+    void resized() override {
+        if (isHeader_) {
+            label.setBounds(4, 0, std::max(1, getWidth() - 8), getHeight());
+        } else {
+            const int labelW = 130;
+            label.setBounds(4, 0, labelW, getHeight());
+            slider.setBounds(labelW + 8, 0,
+                             std::max(1, getWidth() - labelW - 8), getHeight());
+        }
+    }
+
+    bool isParamRow() const { return !isHeader_; }
+    int slotIndex() const { return slotIndex_; }
+    const std::string& title() const { return title_; }
+
+    // Pull the model value into the slider (no onValueChange feedback).
+    void setValueNoNotify(float norm) {
+        slider.setValue(static_cast<double>(norm), juce::dontSendNotification);
+    }
+
+private:
+    juce::String displayText(double norm) const {
+        if (!listItems_.empty()) {
+            const int n = (stepCount_ > 1) ? (stepCount_ - 1) : 1;
+            int idx = static_cast<int>(std::lround(norm * static_cast<double>(n)));
+            idx = juce::jlimit(0, static_cast<int>(listItems_.size()) - 1, idx);
+            return juce::String(listItems_[idx]);
+        }
+        const double span = maxRaw_ - minRaw_;
+        const double raw = (span <= 0.0) ? minRaw_ : minRaw_ + norm * span;
+        juce::String s = juce::String(raw, 3);
+        if (!units_.empty())
+            s = s + " " + juce::String(units_);
+        return s;
+    }
+
+    double parseText(const juce::String& text) const {
+        const double raw = text.getDoubleValue();
+        const double span = maxRaw_ - minRaw_;
+        if (span <= 0.0)
+            return 0.0;
+        return juce::jlimit(0.0, 1.0, (raw - minRaw_) / span);
+    }
+
+    juce::Label label;
+    juce::Slider slider;
+    WeftHost* host_ = nullptr;
+    int slotIndex_ = 0;
+    bool isHeader_ = false;
+    std::string title_;
+    std::string units_;
+    float minRaw_ = 0.f;
+    float maxRaw_ = 1.f;
+    int stepCount_ = 0;
+    std::vector<std::string> listItems_;
+};
+
+// ----------------------------------------------------------------------------
+// --gui: ChainGuiContent - the window content (a scrollable list of Rows)
+// ----------------------------------------------------------------------------
+// Everything here runs on the JUCE message thread. Model reads happen under
+// chainLock_ with a try-lock (skip the tick when the audio thread is mid-block).
+// Rows copy their display metadata, so a rebuild is only triggered by a
+// structural change (slot or param count), not by value changes.
+class ChainGuiContent : public juce::Component {
+public:
+    explicit ChainGuiContent(WeftHost& host)
+        : juce::Component("weft-gui"), host_(&host) {
+        setOpaque(false);
+        page_ = std::make_unique<juce::Component>("weft-page");
+        viewport_ = std::make_unique<juce::Viewport>("weft-viewport");
+        viewport_->setViewedComponent(page_.get(), false);
+        viewport_->setScrollBarsShown(true, false);
+        addAndMakeVisible(viewport_.get());
+        {
+            juce::ScopedLock lock(host_->chainLock_);
+            rebuildLocked();
+        }
+    }
+
+    // Called from WeftHost::guiPull() (message thread).
+    void tick() {
+        juce::GenericScopedTryLock<juce::CriticalSection> tryLock(host_->chainLock_);
+        if (!tryLock.isLocked())
+            return;  // audio mid-block; skip this tick
+        rebuildIfStructureChanged();
+        syncValues();
+    }
+
+    void resized() override {
+        viewport_->setBounds(getLocalBounds());
+        layoutPage(std::max(200, viewport_->getWidth()));
+    }
+
+    // Set an initial page size before the window is first laid out.
+    void initialLayout() { layoutPage(420); }
+
+private:
+    void layoutPage(int width) {
+        const int n = static_cast<int>(rows_.size());
+        page_->setSize(width, std::max(1, n) * ROW_H);
+        for (int i = 0; i < n; ++i)
+            rows_[i]->setBounds(0, i * ROW_H, width, ROW_H);
+    }
+
+    // Rebuild the row list from the chain model. Call with chainLock_ held.
+    void rebuildLocked() {
+        rows_.clear();  // deletes the rows; each auto-removes itself from page_
+        const int nslots = host_->chain.numSlots();
+        int nparams = 0;
+        for (int i = 0; i < nslots; ++i) {
+            const ParamSet* ps = host_->chain.slot(i);
+            const std::string slotId =
+                (ps != nullptr) ? ps->pluginId : host_->chain.slotName(i);
+            const juce::String header =
+                juce::String("Slot ") + juce::String(i) + juce::String(": ")
+                + juce::String(slotId);
+            auto row = std::make_unique<Row>(header);
+            page_->addChildComponent(row.get());
+            rows_.push_back(std::move(row));
+            if (ps == nullptr)
+                continue;
+            for (const Param& p : ps->params) {
+                auto prow = std::make_unique<Row>(*host_, i, p);
+                page_->addChildComponent(prow.get());
+                rows_.push_back(std::move(prow));
+                ++nparams;
+            }
+        }
+        sigSlots_ = nslots;
+        sigParams_ = nparams;
+    }
+
+    void rebuildIfStructureChanged() {
+        const int nslots = host_->chain.numSlots();
+        int nparams = 0;
+        for (int i = 0; i < nslots; ++i)
+            if (const ParamSet* ps = host_->chain.slot(i))
+                nparams += static_cast<int>(ps->params.size());
+        if (nslots != sigSlots_ || nparams != sigParams_) {
+            rebuildLocked();
+            layoutPage(std::max(200, viewport_->getWidth()));
+        }
+    }
+
+    void syncValues() {
+        for (auto& row : rows_) {
+            Row* r = row.get();
+            if (!r->isParamRow())
+                continue;
+            const ParamSet* ps = host_->chain.slot(r->slotIndex());
+            if (ps == nullptr)
+                continue;
+            const Param* p = ps->findByName(r->title());
+            if (p == nullptr)
+                continue;
+            r->setValueNoNotify(p->value);
+        }
+    }
+
+    WeftHost* host_ = nullptr;
+    std::unique_ptr<juce::Component> page_;
+    std::unique_ptr<juce::Viewport> viewport_;
+    std::vector<std::unique_ptr<Row>> rows_;
+    int sigSlots_ = 0;
+    int sigParams_ = 0;
+    static constexpr int ROW_H = 28;
+};
+
+// ----------------------------------------------------------------------------
+// --gui: WeftHostWindow - the top-level resizable window
+// ----------------------------------------------------------------------------
+// Owns the ChainGuiContent (registered as the window's NON-owned content
+// component). The window's tick() is driven by WeftHost::guiPull() from the
+// message thread. Closing the window requests a host quit (same as /chain/quit).
+class WeftHostWindow : public juce::ResizableWindow {
+public:
+    explicit WeftHostWindow(WeftHost& host)
+        : juce::ResizableWindow("weft-host", true), host_(&host) {
+        setUsingNativeTitleBar(true);
+        setResizable(true, false);
+        setResizeLimits(320, 200, 1200, 1200);
+        content_ = std::make_unique<ChainGuiContent>(host);
+        setContentNonOwned(content_.get(), true);
+        content_->initialLayout();
+        centreWithSize(440, 520);
+        setVisible(true);
+    }
+
+    ~WeftHostWindow() override {
+        // content_ is registered as a NON-owned content component. Drop the
+        // window's reference BEFORE the unique_ptr member (and the base dtor)
+        // run, so ~ResizableWindow's own clearContentComponent() is a no-op and
+        // the content is deleted exactly once by content_.
+        clearContentComponent();
+    }
+
+    void userTriedToCloseWindow() override {
+        if (host_ != nullptr)
+            host_->requestQuit();
+    }
+
+    // Message thread.
+    void tick() {
+        if (content_ != nullptr)
+            content_->tick();
+    }
+
+private:
+    WeftHost* host_ = nullptr;
+    std::unique_ptr<ChainGuiContent> content_;
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WeftHostWindow)
+};
+
+// ----------------------------------------------------------------------------
+// WeftHost::stopAll - defined out of line because guiWindow_ is a unique_ptr
+// to WeftHostWindow, which is an incomplete type inside the class body.
+// ----------------------------------------------------------------------------
+void WeftHost::stopAll() {
+    if (stopped_)
+        return;
+    stopped_ = true;
+    stopTimer();
+    guiWindow_.reset();  // the window's listeners touch host state: first
+    if (clock_ != nullptr) {
+        clock_->stopClock();
+        clock_->stopThread(3000);
+        clock_.reset();
+    }
+    // Join the device audio thread so no callback can touch the backend
+    // while it is destroyed.
+    if (adm_.getCurrentAudioDevice() != nullptr)
+        adm_.removeAudioCallback(this);
+    osc_.close();
+    running_ = false;
+    logInfo("stopped");
+}
+
+// ----------------------------------------------------------------------------
+// WeftHost --gui entry-point definitions (window classes need the complete
+// WeftHost type, so they sit here, after the class).
+// ----------------------------------------------------------------------------
+void WeftHost::guiStart() {
+    guiWindow_ = std::make_unique<WeftHostWindow>(*this);
+    logInfo("gui window open");
+}
+
+void WeftHost::guiPull() {
+    if (guiWindow_ != nullptr)
+        guiWindow_->tick();
+}
+
+bool WeftHost::hostGuiSet(int slotIndex, const std::string& name, double norm) {
+    if (slotIndex < 0 || slotIndex >= chain.numSlots())
+        return false;
+    const std::string token = cfg_.slots[slotIndex].id;
+    juce::ScopedLock lock(chainLock_);
+    const float v = chain.setParam(token, name, (float)norm);
+    if (v < 0.f)
+        return false;
+    // Manual control (GUI or OSC) outranks curve automation for this param.
+    userLocked_[std::make_pair(slotIndex, name)] = true;
+    return true;
+}
+
+void WeftHost::requestQuit() {
+    quit_.store(true);
+}
 
 int main(int argc, char** argv) {
     WeftHost host;
