@@ -16,7 +16,7 @@ current after every session** — last section first.
 | host: `weft-render` per-slot curve automation | ✅ **CI GREEN** (run 38220293171: curve mean-gain 0.6875 assert on all 3 OSes) |
 | osc: source-address tracking + `sendTo()` reply routing | ✅ **CI GREEN** (run 38220293171, udp loopback test) |
 | core: CMake + local build | ✅ (MSYS2 ucrt64 g++ 16.2, cmake 4.4, Ninja) |
-| core: CI (GH Actions, 3-OS) | ✅ green 3/3 |
+| core: CI (GH Actions, 3-OS) | ✅ green 3/3 (macOS lane pinned `macos-15` — `macos-latest`→`macos-26` pool flaky, see log 2026-10-15 (2)) |
 | host: JuceBackend (IPluginBackend over JUCE, VST3) | ✅ written, API-verified against JUCE 8.0.4 source |
 | host: test VST3 plugin (WeftSmokePlugin) + smoke CLI | ✅ written (testvst: Gain float 0..1 def 1.0; PWM pct float 0..1 def 1.0 = 1024-sample on/off gate duty cycle) |
 | host: `weft-host` standalone live chain host (headless-ready, OSC-driven) | ✅ **CI GREEN** (run 38525679263, `0fdb134`): `host_main.cpp` 780-line rewrite; null-mode + OSC 4/4 local; see log 2026-10-14 (1) |
@@ -30,6 +30,18 @@ current after every session** — last section first.
 | logo + name (Weft) | 🔨 assets present (assets/logo/) — fix requested 2026-10-14 (Miha); **2026-10-15: Miha deferred the rework ("as you wish" → Iris: keep current mark for v0.1.6, revisit later); not blocking |
 
 ## Log
+
+- **2026-10-15 (2)** — **CI macOS lane pinned to `macos-15` (GitHub runner-pool flake, not a code bug).**
+  `macos-latest` now resolves to `macos-26-arm64` (image shipped 2026-10-13).
+  Its public pool cancelled the trivial `core (macos)` job 3× in a row at
+  exactly 15:00 with **no log blob** (`BlobNotFound` — runner died before
+  producing output), while the identical build passes in <60 s on
+  Windows/Ubuntu and `host (macos)` on the same image succeeded (~2 min).
+  Fix `94603c9`: pin both `ci.yml` matrices to `macos-15` (stable GA arm64
+  label; `macos-14` was retired 2026-10-01). Result: run 38767811066
+  **GREEN 6/6** — `core (macos-15)` passed in 22 s. `build.yml`
+  (manual-dispatch) intentionally left on `macos-latest`; re-run there if it
+  ever flakes. v0.1.6 release unaffected (tag points at `2923c31`).
 
 - **2026-10-15** — **Code-only distribution policy + t3inc2 GUI verified.**
   (a) *Policy change (Miha's decision)*: no binaries on GitHub. JUCE 8.0.4 is
