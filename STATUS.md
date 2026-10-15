@@ -7,7 +7,7 @@ current after every session** — last section first.
 
 - ✅ done · 🔨 in progress · ⏸ blocked (state why) · 📅 planned
 
-## Current state (2026-10-14)
+## Current state (2026-10-15)
 
 | Layer | Status |
 |---|---|
@@ -20,15 +20,45 @@ current after every session** — last section first.
 | host: JuceBackend (IPluginBackend over JUCE, VST3) | ✅ written, API-verified against JUCE 8.0.4 source |
 | host: test VST3 plugin (WeftSmokePlugin) + smoke CLI | ✅ written (testvst: Gain float 0..1 def 1.0; PWM pct float 0..1 def 1.0 = 1024-sample on/off gate duty cycle) |
 | host: `weft-host` standalone live chain host (headless-ready, OSC-driven) | ✅ **CI GREEN** (run 38525679263, `0fdb134`): `host_main.cpp` 780-line rewrite; null-mode + OSC 4/4 local; see log 2026-10-14 (1) |
+| host: `weft-host` `--gui` param-control window (t3inc2) | ✅ local **4/4 verified 2026-10-15** (core 57/57, smoke, OSC 4/4, `--gui` clean exit): `ChainGuiContent` + `WeftHostWindow` (ResizableWindow) spliced into `host_main.cpp` (~1143 lines); CMake `+juce_graphics`/`juce_gui_basics` on weft-host; **deadlock fix**: `guiStart()` before audio-thread start (GUI ctor takes `chainLock_` blocking once; audio thread try-locks per 512-sample block → post-startup GUI uses `GenericScopedTryLock` only). CI verification pending on push |
 | host: CMake (JUCE 8.0.4 sha256-pinned, opt-in WEFT_BUILD_HOST) | ✅ pushed; FORMATS VST3 wrapper fix pending CI verification |
 | host: CI (3-OS matrix + smoke param assertions) | ✅ **GREEN 6/6** (run 37984831984, `f6c9d22`): plugin loads, no crash, smoke assertions pass on Linux/macOS/Windows; `crash_diag` instrumentation removed |
 | cli: `weft-render` offline audio→audio (item 8) | ✅ **CI GREEN** (run 38021890348, `df334c1`): param-push + stride-invariant render + CMake + CI render job (WAV selftest + `DryMix=0.5` gain-ratio assert on all 3 OSes). First compile red 3/3 (bare `int64` + const `createWriterFor`) fixed in the same commit |
-| prebuilt binaries (`release.yml`, `v*` tag) | ✅ **v0.1.5 published** (run 38050365557, `e8fbac9`): windows-x64 zip + linux-x64 tar.gz + macos-universal tar.gz, all verified by download+open; windows exe smoke-tested on this host (`--version` → `weft-render 0.1.5`). First release v0.1.1 had a raw-tar .zip; v0.1.2/3 packaging fixes; v0.1.4 fixed assets, v0.1.5 fixed missing version include — see log (2) |
+| prebuilt binaries / distribution | ✅ **CODE-ONLY policy** (decision 2026-10-15, Miha): all binary assets purged from GitHub (3 release assets from v0.1.5 + 15 workflow artifacts deleted 2026-10-15); `release.yml` removed; new manual-only `build.yml` (workflow_dispatch, 3-OS, 7-day artifact retention) + `weft-ci-artifact-fetch` skill (fetch locally → delete from GH); README re-written (no "quick start binaries"; License section documents JUCE AGPL/commercial + VST3 SDK constraint). Long term: code-only, or buy JUCE commercial licence if we ever distribute commercially |
 | packaging (item 8f) | ✅ root LICENSE (MIT), `--version` + CMake version stamp 0.1.0, README render docs + JUCE AGPLv3/commercial license correction |
 | docs (README/CONFIG/OSC/ARCHITECTURE) | ✅ re-synced to code 2026-10-11 (reply format, curve params, layout, target names) |
-| logo + name (Weft) | ✅ (assets/logo/) |
+| logo + name (Weft) | 🔨 assets present (assets/logo/) but **fix requested 2026-10-14** (Miha) — identity rework (banner/avatar/mark) queued in t6, ships with v0.1.6 |
 
 ## Log
+
+- **2026-10-15** — **Code-only distribution policy + t3inc2 GUI verified.**
+  (a) *Policy change (Miha's decision)*: no binaries on GitHub. JUCE 8.0.4 is
+  dual-licensed AGPL-3.0/commercial and the VST3 SDK is Steinberg
+  proprietary/GPLv3 — legal public binary distribution needs a commercial JUCE
+  licence or an AGPL relicense, neither of which we had. Executed purge:
+  3 `weft-render` assets on the v0.1.5 release deleted (v0.1.0–v0.1.4 had
+  none), all 15 non-expired workflow artifacts deleted, `release.yml`
+  removed. New `.github/workflows/build.yml` is `workflow_dispatch`-only
+  (3-OS matrix, 7-day artifact retention, nothing published to releases);
+  companion `weft-ci-artifact-fetch` skill documents build-on-CI → download
+  locally → delete-from-GH. `README.md`: "Quick start (no compilation)"
+  replaced by "Getting a build" (source-only + `scripts/build-all.ps1`),
+  License section rewritten (code-only policy, both license constraints,
+  long-term plan = buy JUCE commercial licence if we ever distribute
+  commercially; MIT stays). One-shot local build script
+  `scripts/build-all.ps1` (core MSYS2 ucrt64 + host MSVC VS2022 + ctest +
+  smoke + render gain-ratio self-test + 3s headless weft-host run).
+  (b) *t3inc2 `--gui`*: `ChainGuiContent` (live param sliders + slot list) +
+  `WeftHostWindow` (juce::ResizableWindow, auto-close → `stopAll()`) spliced
+  into `host_main.cpp`; `weft-host` now links `juce_graphics` +
+  `juce_gui_basics`. Debugged a **hang** on `--gui`: the window ctor took
+  `chainLock_` with a blocking `ScopedLock` while the audio thread
+  try-locked the same lock every 512-sample block — one-shot blocking
+  acquisition starved → fix: call `guiStart()` **before** the audio thread
+  starts; post-startup GUI uses non-blocking `GenericScopedTryLock` only.
+  Local verification on the probe-free binary: core 57/57, smoke (Gain/PWM
+  pct/Bypass), OSC 4/4, `--gui` 6 s run clean exit 0 (window opens, timer
+  polls chain, clean shutdown).
 
 - **2026-10-14 (1)** — **t3inc1: `weft-host` standalone live chain host (headless-ready, OSC-driven).**
   Full clean rewrite of `host/src/host_main.cpp` (780 lines): the live chain

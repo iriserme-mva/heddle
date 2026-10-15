@@ -1,0 +1,127 @@
+name: build
+
+# On-demand binary builds (MANUAL ONLY — never triggered by push/PR/tag).
+#
+# Code-only policy: nothing produced here is ever published to GitHub
+# Releases or kept as a persistent artifact. Workflow from the Actions tab:
+#   1. "Run workflow" -> builds all 3 OSes, uploads artifacts (retention 7 d)
+#   2. download the artifacts to a local machine
+#   3. delete the artifacts (GH API, see weft-ci-artifact-fetch skill)
+#
+# Reason for the ceremony: the host layer links JUCE 8.0.4 (dual-licensed
+# AGPL-3.0 / commercial) and the VST3 SDK (Steinberg proprietary / GPLv3).
+# Public binary distribution requires one of those license paths; we keep
+# binaries local and publish source only (see README "License").
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: windows-x64
+          - os: ubuntu-latest
+            arch: linux-x64
+          - os: macos-latest
+            arch: macos-universal
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Short SHA
+        id: sha
+        shell: bash
+        run: echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Install build deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libasound2-dev \
+            libfreetype-dev \
+            libfontconfig1-dev \
+            libx11-dev \
+            libxext-dev \
+            libxrender-dev \
+            libx11-xcb-dev \
+            libxkbcommon-dev \
+            libgl1-mesa-dev \
+            libxcomposite-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxrandr-dev
+
+      - name: Configure (Windows – MSVC)
+        if: runner.os == 'Windows'
+        # windows-latest is the windows-2025-vs2026 image (VS 2026 generator).
+        run: cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DWEFT_BUILD_HOST=ON
+
+      - name: Configure (Linux – Ninja)
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DWEFT_BUILD_HOST=ON
+
+      - name: Configure (macOS – universal arm64 + x86_64)
+        if: runner.os == 'macOS'
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DWEFT_BUILD_HOST=ON
+          -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release --target weft_smoke weft_smoke_plugin_VST3 weft-render weft-host
+
+      - name: Build (Linux / macOS)
+        if: runner.os != 'Windows'
+        run: cmake --build build --target weft_smoke weft_smoke_plugin_VST3 weft-render weft-host
+
+      - name: Package (Windows – PowerShell)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force weft-pkg | Out-Null
+          Get-ChildItem -Path build -Recurse -File |
+            Where-Object { $_.Name -in 'weft-host.exe', 'weft-render.exe', 'weft_smoke.exe' } |
+            ForEach-Object { Copy-Item $_.FullName "weft-pkg/" }
+          $vst3 = Get-ChildItem -Path build -Recurse -Directory -Filter 'WeftSmokePlugin.vst3' |
+            Select-Object -First 1
+          if (-not $vst3) { throw "WeftSmokePlugin.vst3 bundle not found under build/" }
+          Copy-Item -Recurse $vst3.FullName "weft-pkg/WeftSmokePlugin.vst3"
+          Copy-Item README.md, LICENSE "weft-pkg/"
+          Compress-Archive -Path weft-pkg -DestinationPath "weft-${{ matrix.arch }}-${{ steps.sha.outputs.sha }}.zip"
+          Get-ChildItem *.zip | Format-List Name, Length
+
+      - name: Package (Linux / macOS – tar)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p weft-pkg
+          for n in weft-host weft-render weft_smoke; do
+            f=$(find build -type f -name "$n" | head -n1)
+            [ -n "$f" ] || { echo "::error::$n not found under build/"; exit 1; }
+            cp "$f" weft-pkg/
+          done
+          vst3=$(find build -type d -name 'WeftSmokePlugin.vst3' | head -n1)
+          [ -n "$vst3" ] || { echo "::error::WeftSmokePlugin.vst3 bundle not found under build/"; exit 1; }
+          cp -r "$vst3" weft-pkg/
+          cp README.md LICENSE weft-pkg/
+          tar -czf "weft-${{ matrix.arch }}-${{ steps.sha.outputs.sha }}.tar.gz" weft-pkg
+          ls -la
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: weft-${{ matrix.arch }}-${{ steps.sha.outputs.sha }}
+          path: |
+            weft-*.zip
+            weft-*.tar.gz
+          retention-days: 7

@@ -37,11 +37,23 @@ Architecture decision (user-directed): the **inner VST wrapper only describes
 the param interface**; the **outer app owns the OSC transport**. The core
 library never links a plugin SDK.
 
-## Quick start (no compilation)
+## Getting a build
 
-Prebuilt `weft-render` binaries for Windows x64, Linux x64 and macOS
-(arm64 + Intel) are published on every [release](../../releases). Grab the
-zip/tarball for your platform, unpack, and:
+This repo publishes **source only** — no prebuilt binaries (the host layer
+links JUCE, which is dual-licensed AGPL-3.0 / commercial; see [License](#license)
+— so build from source:
+
+**Windows, one-shot (core + host + all tests):**
+
+```powershell
+pwsh scripts\build-all.ps1
+```
+
+Binaries land in `build/` (core, MSYS2) and `build-msvc/host/Release/`
+(host, MSVC): `weft-host.exe`, `weft-render.exe`, `weft_smoke.exe` and the
+`WeftSmokePlugin.vst3` test plugin.
+
+Or build just the render CLI by hand:
 
 ```sh
 ./weft-render input.wav chain.json output.wav --bits 16
@@ -150,8 +162,24 @@ Weft is informed by (and deliberately distinct from):
 
 Weft's own source is **MIT**-licensed (see [LICENSE](LICENSE)). The plugin
 ecosystem is what you bring in — Weft neither bundles nor distributes any
-third-party plugin. The host layer links **JUCE 8.0.4**, which is
-dual-licensed **AGPL-3.0 / commercial**; JUCE is fetched at build time
-(`FetchContent`, pinned by SHA256) and is not vendored into this repo.
-Core-only use stays plain MIT; distributing the host layer requires a
-commercial JUCE licence (or an AGPL-compliant distribution).
+third-party plugin.
+
+**Code-only policy.** This repo publishes **source only**: no prebuilt
+binaries are committed, released, or kept on GitHub. Building is done locally
+(`scripts/build-all.ps1` on Windows) or on demand via the manual
+`build` workflow (`.github/workflows/build.yml`), whose artifacts are pulled
+down locally and then deleted from GitHub. (The earlier `weft-render` release
+artifacts, v0.1.0–v0.1.5, have been removed from GitHub for the reason below.)
+
+**Why no binaries.** The host layer links two dependencies whose *binary*
+distribution is restricted:
+- **JUCE 8.0.4** — dual-licensed **AGPL-3.0 / commercial**. JUCE is fetched at
+  build time (`FetchContent`, pinned by SHA256) and never vendored, so the
+  *source* repo stays plain MIT. Distributing a *built* host binary legally
+  requires either a commercial JUCE licence or an AGPL-3.0 relicense of the
+  host layer with a corresponding-source offer.
+- **VST3 SDK** (Steinberg) — proprietary (signed agreement) or **GPLv3**.
+
+Core-only use stays plain MIT. If Weft is ever distributed commercially as
+prebuilt binaries, the plan is to buy the JUCE commercial licence (keeping MIT);
+until then the project stays code-only.
