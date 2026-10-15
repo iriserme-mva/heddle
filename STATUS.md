@@ -27,7 +27,7 @@ current after every session** — last section first.
 | prebuilt binaries / distribution | ✅ **CODE-ONLY policy** (decision 2026-10-15, Miha): all binary assets purged from GitHub (3 release assets from v0.1.5 + 15 workflow artifacts deleted 2026-10-15); `release.yml` removed; new manual-only `build.yml` (workflow_dispatch, 3-OS, 7-day artifact retention) + `weft-ci-artifact-fetch` skill (fetch locally → delete from GH); README re-written (no "quick start binaries"; License section documents JUCE AGPL/commercial + VST3 SDK constraint). Long term: code-only, or buy JUCE commercial licence if we ever distribute commercially |
 | packaging (item 8f) | ✅ root LICENSE (MIT), `--version` + CMake version stamp 0.1.0, README render docs + JUCE AGPLv3/commercial license correction |
 | docs (README/CONFIG/OSC/ARCHITECTURE) | ✅ re-synced to code 2026-10-11 (reply format, curve params, layout, target names) |
-| logo + name (Weft) | 🔨 assets present (assets/logo/) but **fix requested 2026-10-14** (Miha) — identity rework (banner/avatar/mark) queued in t6, ships with v0.1.6 |
+| logo + name (Weft) | 🔨 assets present (assets/logo/) — fix requested 2026-10-14 (Miha); **2026-10-15: Miha deferred the rework ("as you wish" → Iris: keep current mark for v0.1.6, revisit later); not blocking |
 
 ## Log
 
@@ -45,7 +45,8 @@ current after every session** — last section first.
   replaced by "Getting a build" (source-only + `scripts/build-all.ps1`),
   License section rewritten (code-only policy, both license constraints,
   long-term plan = buy JUCE commercial licence if we ever distribute
-  commercially; MIT stays). One-shot local build script
+  commercially; MIT stays). **v0.1.6 tagged + published** (2026-10-15,
+  0 assets by design, full changelog in release body). One-shot local build script
   `scripts/build-all.ps1` (core MSYS2 ucrt64 + host MSVC VS2022 + ctest +
   smoke + render gain-ratio self-test + 3s headless weft-host run).
   (b) *t3inc2 `--gui`*: `ChainGuiContent` (live param sliders + slot list) +
