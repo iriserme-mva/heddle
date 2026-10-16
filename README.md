@@ -4,8 +4,10 @@
 ordered processing chain, drive every parameter live over **OSC**, describe the
 whole setup in a small **JSON** config, and run it offline from a CLI.
 
-> *Heddle*: the longitudinal threads in weaving that the warp threads interlace
-with — here, the plugins whose signals are interlaced into one chain.
+> *Heddle*: the wire or loop in a loom's heddle frame that the warp threads
+> pass through — raising and lowering alternate threads opens the **shed**,
+> the gap the shuttle weaves through. Here, each slot is a heddle: it lifts
+> one plugin's signal into the chain's path, and the chain is the shed.
 
 ![Heddle banner](assets/logo/heddle_banner.png)
 
