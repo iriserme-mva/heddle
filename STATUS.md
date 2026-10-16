@@ -7,7 +7,7 @@ current after every session** — last section first.
 
 - ✅ done · 🔨 in progress · ⏸ blocked (state why) · 📅 planned
 
-## Current state (2026-10-15)
+## Current state (2026-10-16)
 
 | Layer | Status |
 |---|---|
@@ -27,9 +27,32 @@ current after every session** — last section first.
 | prebuilt binaries / distribution | ✅ **CODE-ONLY policy** (decision 2026-10-15, Miha): all binary assets purged from GitHub (3 release assets from v0.1.5 + 15 workflow artifacts deleted 2026-10-15); `release.yml` removed; new manual-only `build.yml` (workflow_dispatch, 3-OS, 7-day artifact retention) + `weft-ci-artifact-fetch` skill (fetch locally → delete from GH); README re-written (no "quick start binaries"; License section documents JUCE AGPL/commercial + VST3 SDK constraint). Long term: code-only, or buy JUCE commercial licence if we ever distribute commercially |
 | packaging (item 8f) | ✅ root LICENSE (MIT), `--version` + CMake version stamp 0.1.0, README render docs + JUCE AGPLv3/commercial license correction |
 | docs (README/CONFIG/OSC/ARCHITECTURE) | ✅ re-synced to code 2026-10-11 (reply format, curve params, layout, target names) |
-| logo + name (Weft) | 🔨 assets present (assets/logo/) — fix requested 2026-10-14 (Miha); **2026-10-15: Miha deferred the rework ("as you wish" → Iris: keep current mark for v0.1.6, revisit later); not blocking |
+| logo + name (Weft) | 🔨 assets present (assets/logo/) — fix requested 2026-10-14 (Miha); **2026-10-16: VLM (qwen3-vl) inspection done — mark fails at favicon scale (muddy gradient, inner dots vanish), banner tagline "audio chain host" half-hidden behind the W, avatar strokes melt <120px; common fix = thicker strokes + solid high-contrast color + fewer elements + vector master. ⚠️ NAME COLLISION surfaced via web: Oiko Audio "Weft" is an active open-source VST3/CLAP spectral filter (same name + same VST3 format) and 870 GitHub repos named "weft". Naming decision now blocks logo rework (regen first if name changes). Awaiting Miha: keep name vs rename |
 
 ## Log
+
+- **2026-10-16 (1)** — **Logo VLM inspection + name-collision finding (no code changed).**
+  Per Miha's note ("use a vision model for logo inspection"), ran all three
+  assets in `assets/logo/` through the live VLM
+  (`qwen3-vl-30b-a3b-instruct`, gpustack) instead of heuristic pixel checks:
+  (1) *mark* — 4-overlapping-circles concept is right for a chain host but
+  fails at favicon scale: inner dots vanish, cyan→purple gradient muddies to
+  one flat color, overlap reads as a blob; (2) *banner* — "WEFT" legible but
+  tagline "audio chain host" half-hidden behind the W and the circles
+  (hierarchy inverted); (3) *avatar* — thin pastel strokes on white melt into
+  a fuzzy oval below ~120px. Common fix thread: thicker strokes,
+  solid/high-contrast color (drop soft gradient), fewer elements, vector
+  master + simplified favicon variant. Then did the "ask Google" leg:
+  **name collision is the bigger issue** — Oiko Audio "Weft" is an active
+  open-source **VST3/CLAP** spectral filter (oikoaudio.com, own GitHub, top
+  hit for "weft audio plugin VST3"): same name *and* same plugin format.
+  Additionally 870 GitHub repos named "weft" (AI language 2k★, task manager
+  516★, video editor 226★ …). Trademark risk low while both OSS, but Oiko
+  commercializing "Weft" later would be an avoidable fight. Decision pending
+  (Miha): keep name (accept collision) vs rename (weaving metaphor still fits
+  a chain host, so rename candidates should keep that soul). Logo rework is
+  held until the naming call — regenerating now would be wasted work if the
+  name changes.
 
 - **2026-10-15 (2)** — **CI macOS lane pinned to `macos-15` (GitHub runner-pool flake, not a code bug).**
   `macos-latest` now resolves to `macos-26-arm64` (image shipped 2026-10-13).
