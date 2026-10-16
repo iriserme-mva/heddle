@@ -2,13 +2,13 @@
 #include <cstddef>
 #include <string>
 
-namespace weft {
+namespace heddle {
 
 // Lock-free, single-producer / single-consumer (SPSC) audio ring backed by
 // named shared memory. One end (the producer) writes interleaved float32
 // frames; the other (the consumer) reads them. No locks and no syscalls in the
 // hot path — just two atomic frame cursors and a memcpy. This is the audio
-// path the Ableton bridge VST3 uses to hand samples to the running Weft
+// path the Ableton bridge VST3 uses to hand samples to the running Heddle
 // process (and back), so the added latency is about one block.
 //
 //   interleaved layout, 2 channels: [L0, R0, L1, R1, ...]
@@ -73,4 +73,4 @@ private:
     Impl* impl_ = nullptr;
 };
 
-}  // namespace weft
+}  // namespace heddle

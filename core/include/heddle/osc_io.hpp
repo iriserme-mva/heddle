@@ -1,9 +1,9 @@
 #pragma once
 #include <string>
 
-#include "weft/osc.hpp"
+#include "heddle/osc.hpp"
 
-namespace weft {
+namespace heddle {
 
 // UDP OSC transport (OSC over UDP — same framing over TCP works too).
 //
@@ -46,4 +46,4 @@ private:
     int localPort_ = 0;
 };
 
-}  // namespace weft
+}  // namespace heddle

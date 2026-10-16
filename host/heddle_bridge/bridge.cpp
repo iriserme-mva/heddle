@@ -1,17 +1,17 @@
-// WeftBridge VST3 -- routes DAW audio to/from a running weft-host over a
-// pair of named shared-memory rings (weft::AudioRing).
+// HeddleBridge VST3 -- routes DAW audio to/from a running heddle-host over a
+// pair of named shared-memory rings (heddle::AudioRing).
 //
 // This is the DAW-facing half of the "bridge" architecture (t5). The
-// companion half is weft-host --audio ring, which creates the two rings
-// (weft.bridge.in / weft.bridge.out by default) and pumps audio through the
+// companion half is heddle-host --audio ring, which creates the two rings
+// (heddle.bridge.in / heddle.bridge.out by default) and pumps audio through the
 // chain:
 //
-//     DAW -> WeftBridge --write-->  [ring weft.bridge.in]  (SPSC, interleaved f32)
+//     DAW -> HeddleBridge --write-->  [ring heddle.bridge.in]  (SPSC, interleaved f32)
 //                                        |
 //                                        v
-//                              weft-host pump thread (runBlockLocked)
+//                              heddle-host pump thread (runBlockLocked)
 //                                        |
-//     DAW <-- WeftBridge <--read-- [ring weft.bridge.out]
+//     DAW <-- HeddleBridge <--read-- [ring heddle.bridge.out]
 //
 // Threading model (the important part):
 //   * AudioRing::open() does CreateFileMappingW/MapViewOfFile (Win32) or
@@ -42,7 +42,7 @@
 // through untouched.
 //
 // NOTE (Windows stale-ring caveat): a live named Win32 mapping cannot be
-// deleted, so if weft-host crashes, ringOut keeps existing (valid() stays
+// deleted, so if heddle-host crashes, ringOut keeps existing (valid() stays
 // true) but stops producing frames; the plugin then zeros its output tail
 // (silence) rather than misrouting audio. A host-side OSC heartbeat that
 // could flip the status line is future work.
@@ -51,16 +51,16 @@
 #include <string>
 #include <vector>
 
-#include "weft/ring.hpp"
+#include "heddle/ring.hpp"
 #include "JuceHeader.h"
 
-namespace weft_bridge {
+namespace heddle_bridge {
 
-// Default ring names. Must match the weft-host --ring PREFIX (default
-// "weft.bridge"), which builds <prefix>.in / <prefix>.out. Kept as compile-
+// Default ring names. Must match the heddle-host --ring PREFIX (default
+// "heddle.bridge"), which builds <prefix>.in / <prefix>.out. Kept as compile-
 // time constants; a runtime override (plugin param or state) is future work.
-static const char* kInName  = "weft.bridge.in";
-static const char* kOutName = "weft.bridge.out";
+static const char* kInName  = "heddle.bridge.in";
+static const char* kOutName = "heddle.bridge.out";
 
 static const int kHostChannels = 2;  // ring + host-chain channel count
 
@@ -98,7 +98,7 @@ public:
         return new BridgeProcessor();
     }
 
-    const juce::String getName() const override { return "WeftBridge"; }
+    const juce::String getName() const override { return "HeddleBridge"; }
     bool hasEditor() const override { return true; }
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
@@ -106,7 +106,7 @@ public:
     double getTailLengthSeconds() const override { return 0.0; }
 
     // JUCE 8.0.4: these are pure-virtual on AudioProcessor (no defaults) --
-    // must all be overridden. WeftBridge has no programs / no state.
+    // must all be overridden. HeddleBridge has no programs / no state.
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
     void setCurrentProgram(int) override {}
@@ -128,7 +128,7 @@ public:
         // re-opens them.
         ringIn_.close();
         ringOut_.close();
-        status_ = "waiting for weft-host";
+        status_ = "waiting for heddle-host";
 
         const size_t need = static_cast<size_t>(samplesPerBlock) * kHostChannels;
         if (inInter_.size() < need)  inInter_.resize(need);
@@ -207,15 +207,15 @@ public:
         // responsive: it returns as soon as the ring is ready or after 100 ms.
         if (!ringIn_.valid()) {
             std::string err;
-            ringIn_ = weft::AudioRing::open(kInName, &err, 100);
+            ringIn_ = heddle::AudioRing::open(kInName, &err, 100);
         }
         if (!ringOut_.valid()) {
             std::string err;
-            ringOut_ = weft::AudioRing::open(kOutName, &err, 100);
+            ringOut_ = heddle::AudioRing::open(kOutName, &err, 100);
         }
         status_ = (ringIn_.valid() && ringOut_.valid())
                       ? "connected"
-                      : "waiting for weft-host";
+                      : "waiting for heddle-host";
     }
 
 private:
@@ -223,15 +223,15 @@ private:
     juce::AudioParameterBool* bypassParameter = nullptr;
 
     // Message-thread-owned; written by timerCallback, read by the editor.
-    juce::String status_ = "waiting for weft-host";
+    juce::String status_ = "waiting for heddle-host";
 
     double hostSampleRate_ = 48000.0;
 
     // Attach state (valid()/close() are thread-agnostic here because the
     // attach happens on the message thread and the audio thread only ever
     // observes valid()==true and then uses the lock-free read/write path).
-    weft::AudioRing ringIn_;
-    weft::AudioRing ringOut_;
+    heddle::AudioRing ringIn_;
+    heddle::AudioRing ringOut_;
 
     // Audio-thread scratch (sized in prepareToPlay).
     std::vector<float> inInter_;
@@ -251,14 +251,14 @@ public:
         // JUCE 8.0.4 API: Label::setText takes a NotificationType (not a
         // bool), and FontOptions has no .bolded()/.withColour() -- style is
         // set via the Font::bold style-flag ctor, colour via setColour().
-        title_.setText("WeftBridge", juce::dontSendNotification);
+        title_.setText("HeddleBridge", juce::dontSendNotification);
         title_.setFont(juce::FontOptions(18.0f, juce::Font::bold));
         title_.setJustificationType(juce::Justification::centredLeft);
         status_.setText(proc_.getBridgeStatus(), juce::dontSendNotification);
         status_.setFont(juce::FontOptions(14.0f));
         status_.setJustificationType(juce::Justification::centredLeft);
         hint_.setText(
-            "Start: weft-host <chain.json> --audio ring   (rings: weft.bridge.*)",
+            "Start: heddle-host <chain.json> --audio ring   (rings: heddle.bridge.*)",
             juce::dontSendNotification);
         hint_.setFont(juce::FontOptions(11.0f));
         hint_.setColour(juce::Label::textColourId, juce::Colours::grey);
@@ -299,10 +299,10 @@ juce::AudioProcessorEditor* BridgeProcessor::createEditor() {
     return new BridgeEditor(*this);
 }
 
-}  // namespace weft_bridge
+}  // namespace heddle_bridge
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() {
-    return weft_bridge::BridgeProcessor::createPluginFilter();
+    return heddle_bridge::BridgeProcessor::createPluginFilter();
 }
 
 // JucePlugin_CreateInstance is provided by the generated JuceHeader.h.

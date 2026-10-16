@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(weft_core VERSION 0.1.6 LANGUAGES C CXX)
+project(heddle_core VERSION 0.1.7 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,9 +10,9 @@ endif()
 
 # ---- core library -----------------------------------------------------------
 # POSITION_INDEPENDENT_CODE: the static lib is also linked into shared
-# objects on Linux (VST3 .so in weft_bridge); without -fPIC the .so link
+# objects on Linux (VST3 .so in heddle_bridge); without -fPIC the .so link
 # fails with "relocation R_X86_64_PC32 ... recompile with -fPIC".
-add_library(weft_core STATIC
+add_library(heddle_core STATIC
     core/src/osc.cpp
     core/src/config.cpp
     core/src/chain.cpp
@@ -20,21 +20,21 @@ add_library(weft_core STATIC
     core/src/osc_io.cpp
     core/src/ring.cpp
 )
-set_target_properties(weft_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(weft_core PUBLIC
+set_target_properties(heddle_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_include_directories(heddle_core PUBLIC
   core/include
   third_party
 )
 if(WIN32)
-  target_compile_definitions(weft_core PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_compile_definitions(heddle_core PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
   # osc_io.cpp uses Winsock on Windows; propagate the import library to every
   # consumer of the static lib (tests, hosts, probes).
-  target_link_libraries(weft_core PUBLIC ws2_32)
+  target_link_libraries(heddle_core PUBLIC ws2_32)
 endif()
 
 # ---- tests ------------------------------------------------------------------
 enable_testing()
-add_executable(weft_core_tests
+add_executable(heddle_core_tests
   core/tests/test_osc.cpp
   core/tests/test_config.cpp
   core/tests/test_chain.cpp
@@ -42,18 +42,18 @@ add_executable(weft_core_tests
   core/tests/test_osc_udp.cpp
   core/tests/test_ring.cpp
 )
-target_link_libraries(weft_core_tests PRIVATE weft_core)
-target_include_directories(weft_core_tests PRIVATE third_party/doctest)
-add_test(NAME weft_core_tests COMMAND weft_core_tests)
+target_link_libraries(heddle_core_tests PRIVATE heddle_core)
+target_include_directories(heddle_core_tests PRIVATE third_party/doctest)
+add_test(NAME heddle_core_tests COMMAND heddle_core_tests)
 
 # ---- latency probe (t4) -----------------------------------------------------
 # ring_latency: instrumented added-latency benchmark for the shared-memory
 # ring (in-process bench + cross-process real-time paced measurement).
-add_executable(weft_ring_latency core/tools/ring_latency.cpp)
-target_link_libraries(weft_ring_latency PRIVATE weft_core)
+add_executable(heddle_ring_latency core/tools/ring_latency.cpp)
+target_link_libraries(heddle_ring_latency PRIVATE heddle_core)
 
 # ---- JUCE host layer (opt-in) ----------------------------------------------
-option(WEFT_BUILD_HOST "Build the JUCE host layer (VST3 plugin + smoke CLI)" OFF)
-if(WEFT_BUILD_HOST)
+option(HEDDLE_BUILD_HOST "Build the JUCE host layer (VST3 plugin + smoke CLI)" OFF)
+if(HEDDLE_BUILD_HOST)
   add_subdirectory(host)
 endif()

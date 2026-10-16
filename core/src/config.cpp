@@ -1,4 +1,4 @@
-#include "weft/config.hpp"
+#include "heddle/config.hpp"
 
 #include <fstream>
 #include <limits>
@@ -6,7 +6,7 @@
 
 #include "nlohmann/json.hpp"
 
-namespace weft {
+namespace heddle {
 namespace config {
 
 using json = nlohmann::json;
@@ -219,4 +219,4 @@ ChainConfig merge(const ChainConfig& base, const ChainConfig& overrideCfg) {
 }
 
 }  // namespace config
-}  // namespace weft
+}  // namespace heddle

@@ -1,21 +1,21 @@
-// weft-bridge-test -- t5 bridge round-trip test (headless, cross-platform).
+// heddle-bridge-test -- t5 bridge round-trip test (headless, cross-platform).
 //
-// Drives the shared-memory ring IPC end-to-end WITHOUT loading the WeftBridge
+// Drives the shared-memory ring IPC end-to-end WITHOUT loading the HeddleBridge
 // VST3 (the plugin is a CI compile/instantiate check; the real audio path is
 // the ring pair, which is what this exercises). It is therefore the "bridge"
-// for testing: it writes DAW-style audio into weft.bridge.in, reads the chain
-// output from weft.bridge.out, and talks OSC to the host.
+// for testing: it writes DAW-style audio into heddle.bridge.in, reads the chain
+// output from heddle.bridge.out, and talks OSC to the host.
 //
 // Usage:
-//   weft-bridge-test <weft-host> <smoke-vst3>
+//   heddle-bridge-test <heddle-host> <smoke-vst3>
 //
-//   weft-host      path to the weft-host executable
-//   smoke-vst3     path to the WeftSmokePlugin VST3 (the chain's Gain slot)
+//   heddle-host      path to the heddle-host executable
+//   smoke-vst3     path to the HeddleSmokePlugin VST3 (the chain's Gain slot)
 //
 // Steps:
-//   1. Write a Gain-0.5 chain.json next to weft-host.
-//   2. Spawn:  weft-host <chain.json> --audio ring --osc-port <port>
-//   3. Wait for both rings (weft.bridge.in / .out) to appear, open them.
+//   1. Write a Gain-0.5 chain.json next to heddle-host.
+//   2. Spawn:  heddle-host <chain.json> --audio ring --osc-port <port>
+//   3. Wait for both rings (heddle.bridge.in / .out) to appear, open them.
 //   4. Audio round-trip: write 8192 frames of a 0.5 constant into .in, read
 //      8192 frames from .out, assert mean amplitude ~= 0.25  (= 0.5 * Gain 0.5).
 //   5. OSC round-trip: /chain/query -> /reply/chain (slot list), then
@@ -24,8 +24,8 @@
 //
 // Exit 0 = PASS, non-zero = FAIL (reason on stderr).
 //
-// NOTE: this binary links only weft_core (ring + OSC). It does NOT link JUCE,
-// so no GUI/audio-device/Xvfb is needed to run it; the child weft-host runs
+// NOTE: this binary links only heddle_core (ring + OSC). It does NOT link JUCE,
+// so no GUI/audio-device/Xvfb is needed to run it; the child heddle-host runs
 // headless (--audio ring, no --gui), and JUCE's X11 init fails gracefully on a
 // display-less Linux runner (no crash).
 
@@ -39,9 +39,9 @@
 #include <thread>
 #include <vector>
 
-#include "weft/ring.hpp"
-#include "weft/osc.hpp"
-#include "weft/osc_io.hpp"
+#include "heddle/ring.hpp"
+#include "heddle/osc.hpp"
+#include "heddle/osc_io.hpp"
 
 #if defined(_WIN32)
   #ifndef WIN32_LEAN_AND_MEAN
@@ -192,8 +192,8 @@ void fail(ChildHandle& child, const std::string& chainPath,
   std::fprintf(stderr, "FAIL: %s\n", why.c_str());
   childKill(child);
   if (child.valid) childReap(child);
-  weft::AudioRing::remove(inName);
-  weft::AudioRing::remove(outName);
+  heddle::AudioRing::remove(inName);
+  heddle::AudioRing::remove(outName);
   std::remove(chainPath.c_str());
   // Must actually terminate: a non-exiting fail() lets the rest of the test
   // run against an already-killed host, producing cascading, misleading
@@ -205,14 +205,14 @@ void fail(ChildHandle& child, const std::string& chainPath,
 
 int main(int argc, char** argv) {
   if (argc < 3) {
-    std::fprintf(stderr, "usage: weft-bridge-test <weft-host> <smoke-vst3>\n");
+    std::fprintf(stderr, "usage: heddle-bridge-test <heddle-host> <smoke-vst3>\n");
     return 2;
   }
   const std::string hostExe = argv[1];
   const std::string smokeVst3 = argv[2];
 
-  const char* inName = "weft.bridge.in";
-  const char* outName = "weft.bridge.out";
+  const char* inName = "heddle.bridge.in";
+  const char* outName = "heddle.bridge.out";
 
   // Deterministic, per-process OSC port (avoids collisions between runs).
   long seed;
@@ -223,9 +223,9 @@ int main(int argc, char** argv) {
 #endif
   const int hostPort = 20000 + static_cast<int>(seed % 4000);
 
-  // 1) Write the Gain-0.5 chain next to weft-host (the build dir is writable
+  // 1) Write the Gain-0.5 chain next to heddle-host (the build dir is writable
   //    on all three CI runners; /tmp is not relied on).
-  const std::string chainPath = dirOf(hostExe) + "weft_bridge_test_chain.json";
+  const std::string chainPath = dirOf(hostExe) + "heddle_bridge_test_chain.json";
   // Default-constructed (invalid) child so the fail() calls that fire BEFORE
   // spawn still have a ChildHandle& to pass. fail() no-ops kill/reap on an
   // invalid child, so this is safe pre-launch. Assigned after spawnChild().
@@ -252,32 +252,32 @@ int main(int argc, char** argv) {
 
   // Best-effort removal of any stale rings (POSIX shm_unlink; no-op on
   // Windows -- the host also self-cleans on create).
-  weft::AudioRing::remove(inName);
-  weft::AudioRing::remove(outName);
+  heddle::AudioRing::remove(inName);
+  heddle::AudioRing::remove(outName);
 
   // 2) Spawn the host headless in ring mode.
   std::vector<std::string> hargv = {
       hostExe, chainPath, "--audio", "ring",
       "--osc-port", std::to_string(hostPort)};
   child = spawnChild(hostExe, hargv);
-  if (!child.valid) fail(child, chainPath, inName, outName, "failed to spawn weft-host");
+  if (!child.valid) fail(child, chainPath, inName, outName, "failed to spawn heddle-host");
 
   // 3) Wait for both rings to appear (the host loads the VST3 first, then
   //    creates the rings), then open them.
   const auto ringDeadline = Clock::now() + std::chrono::seconds(30);
   while (Clock::now() < ringDeadline &&
-         !(weft::AudioRing::exists(inName) && weft::AudioRing::exists(outName))) {
+         !(heddle::AudioRing::exists(inName) && heddle::AudioRing::exists(outName))) {
     if (childFinished(child))
       fail(child, chainPath, inName, outName,
-           "weft-host exited before creating the rings");
+           "heddle-host exited before creating the rings");
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
-  if (!(weft::AudioRing::exists(inName) && weft::AudioRing::exists(outName)))
+  if (!(heddle::AudioRing::exists(inName) && heddle::AudioRing::exists(outName)))
     fail(child, chainPath, inName, outName, "rings did not appear within 30 s");
 
   std::string err;
-  weft::AudioRing ringIn = weft::AudioRing::open(inName, &err, 3000);
-  weft::AudioRing ringOut = weft::AudioRing::open(outName, &err, 3000);
+  heddle::AudioRing ringIn = heddle::AudioRing::open(inName, &err, 3000);
+  heddle::AudioRing ringOut = heddle::AudioRing::open(outName, &err, 3000);
   if (!ringIn.valid() || !ringOut.valid())
     fail(child, chainPath, inName, outName, "open rings failed: " + err);
 
@@ -303,7 +303,7 @@ int main(int argc, char** argv) {
     } else {
       if (childFinished(child))
         fail(child, chainPath, inName, outName,
-             "weft-host exited before producing output");
+             "heddle-host exited before producing output");
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   }
@@ -343,15 +343,15 @@ int main(int argc, char** argv) {
              std::to_string(meanOut).substr(0, 6));
 
   // 5) OSC round-trip on a single full-duplex socket.
-  weft::OscUdp client;
+  heddle::OscUdp client;
   if (!client.bind("127.0.0.1", 0, &err))
     fail(child, chainPath, inName, outName, "client bind failed: " + err);
   if (!client.openOut("127.0.0.1", hostPort, &err))
     fail(child, chainPath, inName, outName, "client openOut failed: " + err);
 
   // 5a) /chain/query -> /reply/chain (slot list, one string).
-  client.send(weft::OscMsg::make("/chain/query"));
-  weft::OscMsg m;
+  client.send(heddle::OscMsg::make("/chain/query"));
+  heddle::OscMsg m;
   std::string chainBody;
   bool gotChain = false;
   const auto oscDeadline = Clock::now() + std::chrono::seconds(5);
@@ -373,7 +373,7 @@ int main(int argc, char** argv) {
   std::printf("bridge-test: /reply/chain -> %s\n", chainBody.c_str());
 
   // 5b) /chain/quit -> /reply/status "quitting", then the host exits 0.
-  client.send(weft::OscMsg::make("/chain/quit"));
+  client.send(heddle::OscMsg::make("/chain/quit"));
   bool gotQuit = false;
   std::string statusBody;
   const auto quitDeadline = Clock::now() + std::chrono::seconds(5);
@@ -395,12 +395,12 @@ int main(int argc, char** argv) {
   ringIn.close();
   ringOut.close();
   client.close();
-  weft::AudioRing::remove(inName);
-  weft::AudioRing::remove(outName);
+  heddle::AudioRing::remove(inName);
+  heddle::AudioRing::remove(outName);
   std::remove(chainPath.c_str());
 
   if (exitCode != 0) {
-    std::fprintf(stderr, "FAIL: weft-host exit code %d (expected 0)\n", exitCode);
+    std::fprintf(stderr, "FAIL: heddle-host exit code %d (expected 0)\n", exitCode);
     return 1;
   }
 

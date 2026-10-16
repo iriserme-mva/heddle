@@ -2,13 +2,13 @@
 // and the JSON curve schema (parse/dump/reject) in the config layer.
 #include "doctest.h"
 
-#include "weft/chain.hpp"
-#include "weft/config.hpp"
-#include "weft/curve.hpp"
+#include "heddle/chain.hpp"
+#include "heddle/config.hpp"
+#include "heddle/curve.hpp"
 
 #include <cmath>
 
-using namespace weft;
+using namespace heddle;
 
 static float near(float a, float b) { return std::abs(a - b) < 1e-6f; }
 

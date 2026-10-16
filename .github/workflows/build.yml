@@ -6,7 +6,7 @@ name: build
 # Releases or kept as a persistent artifact. Workflow from the Actions tab:
 #   1. "Run workflow" -> builds all 3 OSes, uploads artifacts (retention 7 d)
 #   2. download the artifacts to a local machine
-#   3. delete the artifacts (GH API, see weft-ci-artifact-fetch skill)
+#   3. delete the artifacts (GH API, see heddle-ci-artifact-fetch skill)
 #
 # Reason for the ceremony: the host layer links JUCE 8.0.4 (dual-licensed
 # AGPL-3.0 / commercial) and the VST3 SDK (Steinberg proprietary / GPLv3).
@@ -63,65 +63,65 @@ jobs:
       - name: Configure (Windows – MSVC)
         if: runner.os == 'Windows'
         # windows-latest is the windows-2025-vs2026 image (VS 2026 generator).
-        run: cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DWEFT_BUILD_HOST=ON
+        run: cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DHEDDLE_BUILD_HOST=ON
 
       - name: Configure (Linux – Ninja)
         if: runner.os == 'Linux'
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DWEFT_BUILD_HOST=ON
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DHEDDLE_BUILD_HOST=ON
 
       - name: Configure (macOS – universal arm64 + x86_64)
         if: runner.os == 'macOS'
         run: >
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
-          -DWEFT_BUILD_HOST=ON
+          -DHEDDLE_BUILD_HOST=ON
           -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: cmake --build build --config Release --target weft_smoke weft_smoke_plugin_VST3 weft-render weft-host
+        run: cmake --build build --config Release --target heddle_smoke heddle_smoke_plugin_VST3 heddle-render heddle-host
 
       - name: Build (Linux / macOS)
         if: runner.os != 'Windows'
-        run: cmake --build build --target weft_smoke weft_smoke_plugin_VST3 weft-render weft-host
+        run: cmake --build build --target heddle_smoke heddle_smoke_plugin_VST3 heddle-render heddle-host
 
       - name: Package (Windows – PowerShell)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force weft-pkg | Out-Null
+          New-Item -ItemType Directory -Force heddle-pkg | Out-Null
           Get-ChildItem -Path build -Recurse -File |
-            Where-Object { $_.Name -in 'weft-host.exe', 'weft-render.exe', 'weft_smoke.exe' } |
-            ForEach-Object { Copy-Item $_.FullName "weft-pkg/" }
-          $vst3 = Get-ChildItem -Path build -Recurse -Directory -Filter 'WeftSmokePlugin.vst3' |
+            Where-Object { $_.Name -in 'heddle-host.exe', 'heddle-render.exe', 'heddle_smoke.exe' } |
+            ForEach-Object { Copy-Item $_.FullName "heddle-pkg/" }
+          $vst3 = Get-ChildItem -Path build -Recurse -Directory -Filter 'HeddleSmokePlugin.vst3' |
             Select-Object -First 1
-          if (-not $vst3) { throw "WeftSmokePlugin.vst3 bundle not found under build/" }
-          Copy-Item -Recurse $vst3.FullName "weft-pkg/WeftSmokePlugin.vst3"
-          Copy-Item README.md, LICENSE "weft-pkg/"
-          Compress-Archive -Path weft-pkg -DestinationPath "weft-${{ matrix.arch }}-${{ steps.sha.outputs.sha }}.zip"
+          if (-not $vst3) { throw "HeddleSmokePlugin.vst3 bundle not found under build/" }
+          Copy-Item -Recurse $vst3.FullName "heddle-pkg/HeddleSmokePlugin.vst3"
+          Copy-Item README.md, LICENSE "heddle-pkg/"
+          Compress-Archive -Path heddle-pkg -DestinationPath "heddle-${{ matrix.arch }}-${{ steps.sha.outputs.sha }}.zip"
           Get-ChildItem *.zip | Format-List Name, Length
 
       - name: Package (Linux / macOS – tar)
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          mkdir -p weft-pkg
-          for n in weft-host weft-render weft_smoke; do
+          mkdir -p heddle-pkg
+          for n in heddle-host heddle-render heddle_smoke; do
             f=$(find build -type f -name "$n" | head -n1)
             [ -n "$f" ] || { echo "::error::$n not found under build/"; exit 1; }
-            cp "$f" weft-pkg/
+            cp "$f" heddle-pkg/
           done
-          vst3=$(find build -type d -name 'WeftSmokePlugin.vst3' | head -n1)
-          [ -n "$vst3" ] || { echo "::error::WeftSmokePlugin.vst3 bundle not found under build/"; exit 1; }
-          cp -r "$vst3" weft-pkg/
-          cp README.md LICENSE weft-pkg/
-          tar -czf "weft-${{ matrix.arch }}-${{ steps.sha.outputs.sha }}.tar.gz" weft-pkg
+          vst3=$(find build -type d -name 'HeddleSmokePlugin.vst3' | head -n1)
+          [ -n "$vst3" ] || { echo "::error::HeddleSmokePlugin.vst3 bundle not found under build/"; exit 1; }
+          cp -r "$vst3" heddle-pkg/
+          cp README.md LICENSE heddle-pkg/
+          tar -czf "heddle-${{ matrix.arch }}-${{ steps.sha.outputs.sha }}.tar.gz" heddle-pkg
           ls -la
 
       - uses: actions/upload-artifact@v4
         with:
-          name: weft-${{ matrix.arch }}-${{ steps.sha.outputs.sha }}
+          name: heddle-${{ matrix.arch }}-${{ steps.sha.outputs.sha }}
           path: |
-            weft-*.zip
-            weft-*.tar.gz
+            heddle-*.zip
+            heddle-*.tar.gz
           retention-days: 7

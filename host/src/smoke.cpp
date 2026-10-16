@@ -1,4 +1,4 @@
-// weft_host_smoke — loads a VST3 plugin and dumps its parameter surface
+// heddle_host_smoke — loads a VST3 plugin and dumps its parameter surface
 // as JSON to stdout. No args → print usage, exit 0.
 
 #include <cstdio>
@@ -14,7 +14,7 @@ using json = nlohmann::json;
 
 namespace {
 
-json toJson(const weft::Param& p) {
+json toJson(const heddle::Param& p) {
     json j;
     j["id"] = p.id;
     j["title"] = p.title;
@@ -29,7 +29,7 @@ json toJson(const weft::Param& p) {
     return j;
 }
 
-json toJson(const weft::ParamSet& set) {
+json toJson(const heddle::ParamSet& set) {
     json j;
     j["slotId"] = set.pluginId;
     j["pluginName"] = set.pluginName;
@@ -56,8 +56,8 @@ int main(int argc, char** argv) {
     }
 
     const std::string path = argv[1];
-    weft::JuceBackend backend;
-    weft::ParamSet set;
+    heddle::JuceBackend backend;
+    heddle::ParamSet set;
     std::string err;
     if (!backend.loadSlot("smoke", path, set, &err)) {
         std::fprintf(stderr, "error: %s\n", err.c_str());

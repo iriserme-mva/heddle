@@ -1,6 +1,6 @@
-// weft-host — the standalone live JUCE VST3 chain host.
+// heddle-host — the standalone live JUCE VST3 chain host.
 //
-//   weft-host <chain.json> [--audio null|system|ring] [--device NAME]
+//   heddle-host <chain.json> [--audio null|system|ring] [--device NAME]
 //             [--ring PREFIX] [--osc-port N] [--duration SECONDS]
 //             [--gui] [--version]
 //
@@ -14,7 +14,7 @@
 //     headless (CI) testing and OSC-only use.
 //   * --audio ring: no audio device is touched; instead the host owns two
 //     named shared-memory audio rings (PREFIX.in / PREFIX.out, default
-//     weft.bridge.in / weft.bridge.out) and a pump thread. The WeftBridge
+//     heddle.bridge.in / heddle.bridge.out) and a pump thread. The HeddleBridge
 //     VST3 (or the bridge round-trip test) writes interleaved float32 frames
 //     into PREFIX.in and reads the processed audio back from PREFIX.out. The
 //     pump paces the chain at the config's sample rate / block size, exactly
@@ -58,7 +58,7 @@
 // it until /chain/<slot>/reset or a hot-apply.
 //
 // Headless pattern: plain main() + juce::initialiseJuce_GUI() — the same
-// shape weft_smoke / weft-render already build with in CI (no
+// shape heddle_smoke / heddle-render already build with in CI (no
 // JUCEApplication, no window). Timers are serviced by the
 // MessageManager dispatch loop in run().
 //
@@ -93,38 +93,38 @@
 #include <juce_core/juce_core.h>
 
 #include "JuceBackend.hpp"
-#include "weft/chain.hpp"
-#include "weft/config.hpp"
-#include "weft/osc.hpp"
-#include "weft/osc_io.hpp"
-#include "weft/ring.hpp"
+#include "heddle/chain.hpp"
+#include "heddle/config.hpp"
+#include "heddle/osc.hpp"
+#include "heddle/osc_io.hpp"
+#include "heddle/ring.hpp"
 
-// Stamped by CMake (configure_file -> weft_version.hpp on this target's
-// include path), same as weft_smoke / weft-render.
-#include "weft_version.hpp"
-#ifndef WEFT_VERSION_STRING
-#define WEFT_VERSION_STRING "unknown"
+// Stamped by CMake (configure_file -> heddle_version.hpp on this target's
+// include path), same as heddle_smoke / heddle-render.
+#include "heddle_version.hpp"
+#ifndef HEDDLE_VERSION_STRING
+#define HEDDLE_VERSION_STRING "unknown"
 #endif
 
-using weft::Chain;
-using weft::ChainConfig;
-using weft::OscMsg;
-using weft::OscUdp;
-using weft::Param;
-using weft::ParamSet;
-using weft::ParamSpec;
-using weft::SlotConfig;
-namespace osc_addr = weft::osc_addr;
+using heddle::Chain;
+using heddle::ChainConfig;
+using heddle::OscMsg;
+using heddle::OscUdp;
+using heddle::Param;
+using heddle::ParamSet;
+using heddle::ParamSpec;
+using heddle::SlotConfig;
+namespace osc_addr = heddle::osc_addr;
 
 namespace {
 
 void logInfo(const std::string& msg) {
-    std::fprintf(stderr, "[weft-host] %s\n", msg.c_str());
+    std::fprintf(stderr, "[heddle-host] %s\n", msg.c_str());
     std::fflush(stderr);
 }
 
 void logErr(const std::string& msg) {
-    std::fprintf(stderr, "[weft-host] ERROR: %s\n", msg.c_str());
+    std::fprintf(stderr, "[heddle-host] ERROR: %s\n", msg.c_str());
     std::fflush(stderr);
 }
 
@@ -140,7 +140,7 @@ std::string fmtF(float v) {
 // config when numSamples <= 0.
 class NullClockThread : public juce::Thread {
 public:
-    NullClockThread() : juce::Thread("weft-null-clock") {}
+    NullClockThread() : juce::Thread("heddle-null-clock") {}
 
     // Set before startThread(); cb must outlive the thread (the host owns
     // both and stops the thread in stopAll()).
@@ -176,20 +176,20 @@ private:
 // config's rate/block, but only when the producer actually has a full block
 // of data in the input ring. The callback itself decides the block size from
 // its config when numSamples <= 0 (identical to the null-clock tick); the
-// ring-mode run() override in WeftHost feeds the real audio in/out through
+// ring-mode run() override in HeddleHost feeds the real audio in/out through
 // the rings. When the input ring is empty the callback is NOT invoked (no
 // chain processing, no output written), so the consumer side (the DAW-side
 // bridge or the round-trip test) simply sees no new output until input
 // arrives.
 class AudioRingPumpThread : public juce::Thread {
 public:
-    AudioRingPumpThread() : juce::Thread("weft-ring-pump") {}
+    AudioRingPumpThread() : juce::Thread("heddle-ring-pump") {}
 
     // Set before startThread(); the rings are owned by the host and outlive
     // the thread (the host stops the thread in stopAll() before closing the
     // rings).
-    void setPace(juce::AudioIODeviceCallback* cb, weft::AudioRing* inRing,
-                 weft::AudioRing* outRing, int sampleRate, int blockSize) {
+    void setPace(juce::AudioIODeviceCallback* cb, heddle::AudioRing* inRing,
+                 heddle::AudioRing* outRing, int sampleRate, int blockSize) {
         cb_ = cb;
         inRing_ = inRing;
         outRing_ = outRing;
@@ -212,8 +212,8 @@ private:
     }
 
     juce::AudioIODeviceCallback* cb_ = nullptr;
-    weft::AudioRing* inRing_ = nullptr;
-    weft::AudioRing* outRing_ = nullptr;
+    heddle::AudioRing* inRing_ = nullptr;
+    heddle::AudioRing* outRing_ = nullptr;
     int frames_ = 512;
     int pollMs_ = 1;
     std::atomic<bool> running_{true};
@@ -221,17 +221,17 @@ private:
 
 }  // namespace
 
-class WeftHostWindow;  // --gui window; defined after WeftHost (its content
-                       // callbacks need the complete WeftHost type)
+class HeddleHostWindow;  // --gui window; defined after HeddleHost (its content
+                       // callbacks need the complete HeddleHost type)
 
 // ----------------------------------------------------------------------------
-// WeftHost
+// HeddleHost
 // ----------------------------------------------------------------------------
-class WeftHost : public juce::AudioIODeviceCallback,
+class HeddleHost : public juce::AudioIODeviceCallback,
                  public juce::Timer {
 public:
-    WeftHost() = default;
-    ~WeftHost() override { stopAll(); }
+    HeddleHost() = default;
+    ~HeddleHost() override { stopAll(); }
 
     int run(int argc, char** argv) {
         if (!parseArgs(argc, argv))
@@ -244,7 +244,7 @@ public:
         juce::initialiseJuce_GUI();
 
         std::string err;
-        if (!weft::config::parseFile(args_.configPath, cfg_, &err)) {
+        if (!heddle::config::parseFile(args_.configPath, cfg_, &err)) {
             logErr("config: " + err);
             return 1;
         }
@@ -286,16 +286,16 @@ public:
             const int cap = (cfg_.blockSize > 0 ? cfg_.blockSize : 512) * 16;
             ringInName_ = args_.ringPrefix + ".in";
             ringOutName_ = args_.ringPrefix + ".out";
-            if (weft::AudioRing::exists(ringInName_))
-                weft::AudioRing::remove(ringInName_);
-            if (weft::AudioRing::exists(ringOutName_))
-                weft::AudioRing::remove(ringOutName_);
-            ringIn_ = weft::AudioRing::create(ringInName_, cap, nch, cfg_.sampleRate, &err);
+            if (heddle::AudioRing::exists(ringInName_))
+                heddle::AudioRing::remove(ringInName_);
+            if (heddle::AudioRing::exists(ringOutName_))
+                heddle::AudioRing::remove(ringOutName_);
+            ringIn_ = heddle::AudioRing::create(ringInName_, cap, nch, cfg_.sampleRate, &err);
             if (!ringIn_.valid()) {
                 logErr("ring create " + ringInName_ + ": " + err);
                 return 1;
             }
-            ringOut_ = weft::AudioRing::create(ringOutName_, cap, nch, cfg_.sampleRate, &err);
+            ringOut_ = heddle::AudioRing::create(ringOutName_, cap, nch, cfg_.sampleRate, &err);
             if (!ringOut_.valid()) {
                 logErr("ring create " + ringOutName_ + ": " + err);
                 ringIn_.close();
@@ -322,7 +322,7 @@ public:
             return 1;
         }
 
-        logInfo("ready, v" WEFT_VERSION_STRING ", " + std::to_string(chain.numSlots()) +
+        logInfo("ready, v" HEDDLE_VERSION_STRING ", " + std::to_string(chain.numSlots()) +
                 " slot(s), OSC UDP " + bindHost_ + ":" + std::to_string(osc_.localPort()) +
                 (args_.durationSec > 0.0 ? ", stopping in " + fmtF(args_.durationSec) + " s"
                                          : ""));
@@ -499,7 +499,7 @@ private:
         std::string configPath;
         std::string audioMode = "system";
         std::string deviceName;
-        std::string ringPrefix = "weft.bridge";  // --ring: PREFIX.in / PREFIX.out
+        std::string ringPrefix = "heddle.bridge";  // --ring: PREFIX.in / PREFIX.out
         int oscPort = 0;            // 0 = not given on the CLI
         bool printVersion = false;
         double durationSec = 0.0;
@@ -556,7 +556,7 @@ private:
             }
         }
         if (args_.printVersion) {
-            std::printf("weft-host %s\n", WEFT_VERSION_STRING);
+            std::printf("heddle-host %s\n", HEDDLE_VERSION_STRING);
             return true;
         }
         if (args_.configPath.empty()) {
@@ -579,8 +579,8 @@ private:
             "       [--ring PREFIX] [--osc-port N] [--duration SECONDS] [--gui] [--version]\n"
             "  Live VST3 chain host (JUCE). OSC control over UDP; the config's\n"
             "  osc.port/bind_host are the defaults, --osc-port overrides the port.\n"
-            "  --audio ring serves the WeftBridge VST3 over the shared-memory rings\n"
-            "  PREFIX.in / PREFIX.out (default weft.bridge.in / weft.bridge.out).\n"
+            "  --audio ring serves the HeddleBridge VST3 over the shared-memory rings\n"
+            "  PREFIX.in / PREFIX.out (default heddle.bridge.in / heddle.bridge.out).\n"
             "  --gui opens a window with per-slot param sliders (default off,\n"
             "  headless).\n",
             prog);
@@ -858,12 +858,12 @@ private:
         std::string err;
         ChainConfig next;
         if (isPath) {
-            if (!weft::config::parseFile(payload, next, &err)) {
+            if (!heddle::config::parseFile(payload, next, &err)) {
                 reply("/status", "error: apply: " + err, src);
                 return;
             }
         } else {
-            if (!weft::config::parse(payload, next, &err)) {
+            if (!heddle::config::parse(payload, next, &err)) {
                 reply("/status", "error: apply: " + err, src);
                 return;
             }
@@ -881,7 +881,7 @@ private:
     }
 
     std::string statusLine() const {
-        return std::string("weft-host v") + WEFT_VERSION_STRING + " slots=" +
+        return std::string("heddle-host v") + HEDDLE_VERSION_STRING + " slots=" +
                std::to_string(chain.numSlots()) + " audio=" + args_.audioMode +
                " frame=" + std::to_string(chainFrame_) +
                " rate=" + std::to_string((int)specRate_) +
@@ -921,12 +921,12 @@ private:
 
     // ---- teardown (idempotent) -------------------------------------------------
     void stopAll();  // out-of-line: guiWindow_ needs the complete
-                     // WeftHostWindow type (defined at the bottom).
+                     // HeddleHostWindow type (defined at the bottom).
 
     // ---- members ---------------------------------------------------------------
     Args args_;
     ChainConfig cfg_;
-    weft::JuceBackend backend_;
+    heddle::JuceBackend backend_;
     Chain chain{backend_};
     juce::AudioDeviceManager adm_;
     OscUdp osc_;
@@ -944,11 +944,11 @@ private:
     int devBlock_ = 0;
     int64_t chainFrame_ = 0;
 
-    // --audio ring: the two shared-memory rings (host owns both; the WeftBridge
+    // --audio ring: the two shared-memory rings (host owns both; the HeddleBridge
     // VST3 or the round-trip test attaches to them). ringIn_ = DAW -> host,
     // ringOut_ = host -> DAW. Only the pump thread touches the rings, so the
     // per-block scratch below needs no locking.
-    weft::AudioRing ringIn_, ringOut_;
+    heddle::AudioRing ringIn_, ringOut_;
     std::unique_ptr<AudioRingPumpThread> ringPump_;
     // ringInInter_ = interleaved samples read from ringIn_; de-interleaved into
     // the planar ringInBuf_ (ringInPtrs_[c] = channel-c pointer) for the chain.
@@ -963,7 +963,7 @@ private:
     std::map<std::pair<int, std::string>, float> prevCurve_;
     std::map<std::pair<int, std::string>, bool> userLocked_;
 
-    std::unique_ptr<WeftHostWindow> guiWindow_;
+    std::unique_ptr<HeddleHostWindow> guiWindow_;
 
     std::atomic<bool> quit_{false};
     bool running_ = false;
@@ -976,13 +976,13 @@ private:
 // A param row copies the param's display metadata (title/units/range/labels)
 // at build time, so it never points into the chain model (which is replaced on
 // load/apply). The slider's onValueChange routes through
-// WeftHost::hostGuiSet (the OSC set path, user-locked); the row's value is
+// HeddleHost::hostGuiSet (the OSC set path, user-locked); the row's value is
 // re-synced from the model by ChainGuiContent::tick() every 5 ms tick.
 class Row : public juce::Component {
 public:
     // Param row.
-    Row(WeftHost& host, int slotIndex, const Param& p)
-        : juce::Component("weft-row"),
+    Row(HeddleHost& host, int slotIndex, const Param& p)
+        : juce::Component("heddle-row"),
           host_(&host),
           slotIndex_(slotIndex),
           title_(p.title),
@@ -1017,7 +1017,7 @@ public:
 
     // Slot header row.
     explicit Row(const juce::String& text)
-        : juce::Component("weft-header"),
+        : juce::Component("heddle-header"),
           host_(nullptr),
           isHeader_(true) {
         label.setText(text, juce::dontSendNotification);
@@ -1072,7 +1072,7 @@ private:
 
     juce::Label label;
     juce::Slider slider;
-    WeftHost* host_ = nullptr;
+    HeddleHost* host_ = nullptr;
     int slotIndex_ = 0;
     bool isHeader_ = false;
     std::string title_;
@@ -1092,11 +1092,11 @@ private:
 // structural change (slot or param count), not by value changes.
 class ChainGuiContent : public juce::Component {
 public:
-    explicit ChainGuiContent(WeftHost& host)
-        : juce::Component("weft-gui"), host_(&host) {
+    explicit ChainGuiContent(HeddleHost& host)
+        : juce::Component("heddle-gui"), host_(&host) {
         setOpaque(false);
-        page_ = std::make_unique<juce::Component>("weft-page");
-        viewport_ = std::make_unique<juce::Viewport>("weft-viewport");
+        page_ = std::make_unique<juce::Component>("heddle-page");
+        viewport_ = std::make_unique<juce::Viewport>("heddle-viewport");
         viewport_->setViewedComponent(page_.get(), false);
         viewport_->setScrollBarsShown(true, false);
         addAndMakeVisible(viewport_.get());
@@ -1106,7 +1106,7 @@ public:
         }
     }
 
-    // Called from WeftHost::guiPull() (message thread).
+    // Called from HeddleHost::guiPull() (message thread).
     void tick() {
         juce::GenericScopedTryLock<juce::CriticalSection> tryLock(host_->chainLock_);
         if (!tryLock.isLocked())
@@ -1186,7 +1186,7 @@ private:
         }
     }
 
-    WeftHost* host_ = nullptr;
+    HeddleHost* host_ = nullptr;
     std::unique_ptr<juce::Component> page_;
     std::unique_ptr<juce::Viewport> viewport_;
     std::vector<std::unique_ptr<Row>> rows_;
@@ -1196,15 +1196,15 @@ private:
 };
 
 // ----------------------------------------------------------------------------
-// --gui: WeftHostWindow - the top-level resizable window
+// --gui: HeddleHostWindow - the top-level resizable window
 // ----------------------------------------------------------------------------
 // Owns the ChainGuiContent (registered as the window's NON-owned content
-// component). The window's tick() is driven by WeftHost::guiPull() from the
+// component). The window's tick() is driven by HeddleHost::guiPull() from the
 // message thread. Closing the window requests a host quit (same as /chain/quit).
-class WeftHostWindow : public juce::ResizableWindow {
+class HeddleHostWindow : public juce::ResizableWindow {
 public:
-    explicit WeftHostWindow(WeftHost& host)
-        : juce::ResizableWindow("weft-host", true), host_(&host) {
+    explicit HeddleHostWindow(HeddleHost& host)
+        : juce::ResizableWindow("heddle-host", true), host_(&host) {
         setUsingNativeTitleBar(true);
         setResizable(true, false);
         setResizeLimits(320, 200, 1200, 1200);
@@ -1215,7 +1215,7 @@ public:
         setVisible(true);
     }
 
-    ~WeftHostWindow() override {
+    ~HeddleHostWindow() override {
         // content_ is registered as a NON-owned content component. Drop the
         // window's reference BEFORE the unique_ptr member (and the base dtor)
         // run, so ~ResizableWindow's own clearContentComponent() is a no-op and
@@ -1235,16 +1235,16 @@ public:
     }
 
 private:
-    WeftHost* host_ = nullptr;
+    HeddleHost* host_ = nullptr;
     std::unique_ptr<ChainGuiContent> content_;
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WeftHostWindow)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HeddleHostWindow)
 };
 
 // ----------------------------------------------------------------------------
-// WeftHost::stopAll - defined out of line because guiWindow_ is a unique_ptr
-// to WeftHostWindow, which is an incomplete type inside the class body.
+// HeddleHost::stopAll - defined out of line because guiWindow_ is a unique_ptr
+// to HeddleHostWindow, which is an incomplete type inside the class body.
 // ----------------------------------------------------------------------------
-void WeftHost::stopAll() {
+void HeddleHost::stopAll() {
     if (stopped_)
         return;
     stopped_ = true;
@@ -1276,20 +1276,20 @@ void WeftHost::stopAll() {
 }
 
 // ----------------------------------------------------------------------------
-// WeftHost --gui entry-point definitions (window classes need the complete
-// WeftHost type, so they sit here, after the class).
+// HeddleHost --gui entry-point definitions (window classes need the complete
+// HeddleHost type, so they sit here, after the class).
 // ----------------------------------------------------------------------------
-void WeftHost::guiStart() {
-    guiWindow_ = std::make_unique<WeftHostWindow>(*this);
+void HeddleHost::guiStart() {
+    guiWindow_ = std::make_unique<HeddleHostWindow>(*this);
     logInfo("gui window open");
 }
 
-void WeftHost::guiPull() {
+void HeddleHost::guiPull() {
     if (guiWindow_ != nullptr)
         guiWindow_->tick();
 }
 
-bool WeftHost::hostGuiSet(int slotIndex, const std::string& name, double norm) {
+bool HeddleHost::hostGuiSet(int slotIndex, const std::string& name, double norm) {
     if (slotIndex < 0 || slotIndex >= chain.numSlots())
         return false;
     const std::string token = cfg_.slots[slotIndex].id;
@@ -1302,11 +1302,11 @@ bool WeftHost::hostGuiSet(int slotIndex, const std::string& name, double norm) {
     return true;
 }
 
-void WeftHost::requestQuit() {
+void HeddleHost::requestQuit() {
     quit_.store(true);
 }
 
 int main(int argc, char** argv) {
-    WeftHost host;
+    HeddleHost host;
     return host.run(argc, argv);
 }

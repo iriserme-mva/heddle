@@ -1,14 +1,14 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-  Weft — one-shot FULL local build on Windows (both layers) + all checks.
+  Heddle — one-shot FULL local build on Windows (both layers) + all checks.
 
-  core:  MSYS2 ucrt64 g++ (Ninja) -> weft_core static lib + ctest suite
-  host:  MSVC (VS 2022 BuildTools) -> WeftSmokePlugin.vst3 + weft_smoke
-         + weft-render + weft-host, then smoke / render / host self-tests
+  core:  MSYS2 ucrt64 g++ (Ninja) -> heddle_core static lib + ctest suite
+  host:  MSVC (VS 2022 BuildTools) -> HeddleSmokePlugin.vst3 + heddle_smoke
+         + heddle-render + heddle-host, then smoke / render / host self-tests
 
   Usage (from anywhere):
-    pwsh D:\path\to\weft\scripts\build-all.ps1 [-SkipCore] [-SkipHost] [-NoTests]
+    pwsh D:\path\to\heddle\scripts\build-all.ps1 [-SkipCore] [-SkipHost] [-NoTests]
 
   Requirements:
     * MSYS2 at C:\msys64 with ucrt64 (cmake, ninja, g++)
@@ -24,7 +24,7 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
-Write-Host "weft build-all: root = $root" -ForegroundColor Cyan
+Write-Host "heddle build-all: root = $root" -ForegroundColor Cyan
 
 function Step($msg) { Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
 
@@ -63,29 +63,29 @@ if (-not $SkipHost) {
   Import-Module $devShell
   Enter-VsDevShell 05b31e49 -Arch amd64 -SkipAutomaticLocation | Out-Null
 
-  Step "host: configure (VS 2022 x64, WEFT_BUILD_HOST=ON)"
-  & cmake -S . -B build-msvc -G "Visual Studio 17 2022" -A x64 -DWEFT_BUILD_HOST=ON
+  Step "host: configure (VS 2022 x64, HEDDLE_BUILD_HOST=ON)"
+  & cmake -S . -B build-msvc -G "Visual Studio 17 2022" -A x64 -DHEDDLE_BUILD_HOST=ON
   if ($LASTEXITCODE) { throw "host configure failed ($LASTEXITCODE)" }
 
   Step "host: build (smoke plugin + smoke CLI + render + host)"
   & cmake --build build-msvc --config Release `
-    --target weft_smoke weft_smoke_plugin_VST3 weft-render weft-host
+    --target heddle_smoke heddle_smoke_plugin_VST3 heddle-render heddle-host
   if ($LASTEXITCODE) { throw "host build failed ($LASTEXITCODE)" }
 
   if (-not $NoTests) {
     $rel  = "build-msvc\host\Release"
-    $vst3 = "build-msvc\host\test_plugin\weft_smoke_plugin_artefacts\Release\VST3\WeftSmokePlugin.vst3"
-    foreach ($b in "weft_smoke.exe", "weft-render.exe", "weft-host.exe") {
+    $vst3 = "build-msvc\host\test_plugin\heddle_smoke_plugin_artefacts\Release\VST3\HeddleSmokePlugin.vst3"
+    foreach ($b in "heddle_smoke.exe", "heddle-render.exe", "heddle-host.exe") {
       if (-not (Test-Path "$rel\$b")) { throw "missing binary: $rel\$b" }
     }
     if (-not (Test-Path $vst3)) { throw "missing plugin bundle: $vst3" }
 
-    $tmp = Join-Path $env:TEMP "weft_build_selftest"
+    $tmp = Join-Path $env:TEMP "heddle_build_selftest"
     New-Item -ItemType Directory -Force $tmp | Out-Null
     $vst3f = $vst3 -replace '\\', '/'   # JSON-safe forward slashes
 
     Step "host: smoke (load plugin, dump params)"
-    $smokeText = (& "$rel\weft_smoke.exe" $vst3) -join " "
+    $smokeText = (& "$rel\heddle_smoke.exe" $vst3) -join " "
     if ($smokeText -notmatch '"Gain"' -or $smokeText -notmatch 'PWM pct') {
       throw "smoke output missing Gain/'PWM pct': $smokeText"
     }
@@ -117,8 +117,8 @@ print("generated in.wav + render_chain.json in", tmp)
     python "$tmp\gen.py" $vst3f $tmp
     if ($LASTEXITCODE) { throw "render test input generation failed ($LASTEXITCODE)" }
 
-    & "$rel\weft-render.exe" "$tmp\in.wav" "$tmp\render_chain.json" "$tmp\out.wav" --bits 16
-    if ($LASTEXITCODE) { throw "weft-render self-test failed ($LASTEXITCODE)" }
+    & "$rel\heddle-render.exe" "$tmp\in.wav" "$tmp\render_chain.json" "$tmp\out.wav" --bits 16
+    if ($LASTEXITCODE) { throw "heddle-render self-test failed ($LASTEXITCODE)" }
 
     $verifyPy = @'
 import struct, sys
@@ -150,7 +150,7 @@ print("render verify OK")
     if ($LASTEXITCODE) { throw "render verify failed ($LASTEXITCODE)" }
     Write-Host "render OK (mean gain 0.3125)"
 
-    Step "host: weft-host headless self-test (3 s)"
+    Step "host: heddle-host headless self-test (3 s)"
     $hostCfg = @"
 {
   "sample_rate": 44100,
@@ -167,9 +167,9 @@ print("render verify OK")
 }
 "@
     Set-Content -Path "$tmp\host_cfg.json" -Value $hostCfg -Encoding utf8
-    & "$rel\weft-host.exe" "$tmp\host_cfg.json" --audio null --duration 3
-    if ($LASTEXITCODE) { throw "weft-host self-test failed ($LASTEXITCODE)" }
-    Write-Host "weft-host OK (clean 3 s headless run)"
+    & "$rel\heddle-host.exe" "$tmp\host_cfg.json" --audio null --duration 3
+    if ($LASTEXITCODE) { throw "heddle-host self-test failed ($LASTEXITCODE)" }
+    Write-Host "heddle-host OK (clean 3 s headless run)"
   }
 }
 

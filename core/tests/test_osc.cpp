@@ -3,11 +3,11 @@
 #define DOCTEST_CONFIG_IMPLEMENT
 #include "doctest.h"
 
-#include "weft/osc.hpp"
+#include "heddle/osc.hpp"
 
 #include <cmath>
 
-using namespace weft;
+using namespace heddle;
 using osc_addr::ParamAction;
 
 TEST_SUITE("osc.wire")

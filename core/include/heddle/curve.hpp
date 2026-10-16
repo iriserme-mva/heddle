@@ -3,7 +3,7 @@
 #include <utility>
 #include <vector>
 
-namespace weft {
+namespace heddle {
 
 // A time-series parameter: keyframes of (absolute_frame, normalized_0_1).
 //
@@ -63,4 +63,4 @@ struct ParamSpec {
     float atStart() const { return at(0); }
 };
 
-}  // namespace weft
+}  // namespace heddle

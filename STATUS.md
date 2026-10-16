@@ -1,4 +1,4 @@
-# Weft — build status
+# Heddle — build status
 
 Updated by whoever works on the project (human or agent). **Keep this file
 current after every session** — last section first.
@@ -13,25 +13,51 @@ current after every session** — last section first.
 |---|---|
 | core: param/chain/config/osc/osc_io | ✅ builds, 39/39 test cases, 253/253 assertions |
 | core: param time-series (static\|curve) parse/dump/merge/eval | ✅ **CI GREEN** (run 38220293171, all 3 OSes) |
-| host: `weft-render` per-slot curve automation | ✅ **CI GREEN** (run 38220293171: curve mean-gain 0.6875 assert on all 3 OSes) |
+| host: `heddle-render` per-slot curve automation | ✅ **CI GREEN** (run 38220293171: curve mean-gain 0.6875 assert on all 3 OSes) |
 | osc: source-address tracking + `sendTo()` reply routing | ✅ **CI GREEN** (run 38220293171, udp loopback test) |
 | core: CMake + local build | ✅ (MSYS2 ucrt64 g++ 16.2, cmake 4.4, Ninja) |
 | core: CI (GH Actions, 3-OS) | ✅ green 3/3 (macOS lane pinned `macos-15` — `macos-latest`→`macos-26` pool flaky, see log 2026-10-15 (2)) |
 | host: JuceBackend (IPluginBackend over JUCE, VST3) | ✅ written, API-verified against JUCE 8.0.4 source |
-| host: test VST3 plugin (WeftSmokePlugin) + smoke CLI | ✅ written (testvst: Gain float 0..1 def 1.0; PWM pct float 0..1 def 1.0 = 1024-sample on/off gate duty cycle) |
-| host: `weft-host` standalone live chain host (headless-ready, OSC-driven) | ✅ **CI GREEN** (run 38525679263, `0fdb134`): `host_main.cpp` 780-line rewrite; null-mode + OSC 4/4 local; see log 2026-10-14 (1) |
-| host: `weft-host` `--gui` param-control window (t3inc2) | ✅ **CI GREEN** (run 38733502466, `de0c36c`): local 4/4 verified 2026-10-15 (core 57/57, smoke, OSC 4/4, `--gui` clean exit) + full CI green: `ChainGuiContent` + `WeftHostWindow` (ResizableWindow) spliced into `host_main.cpp` (~1143 lines); CMake `+juce_graphics`/`juce_gui_basics` on weft-host; **deadlock fix**: `guiStart()` before audio-thread start (GUI ctor takes `chainLock_` blocking once; audio thread try-locks per 512-sample block → post-startup GUI uses `GenericScopedTryLock` only) |
-| host: CMake (JUCE 8.0.4 sha256-pinned, opt-in WEFT_BUILD_HOST) | ✅ pushed; FORMATS VST3 wrapper fix pending CI verification |
+| host: test VST3 plugin (HeddleSmokePlugin) + smoke CLI | ✅ written (testvst: Gain float 0..1 def 1.0; PWM pct float 0..1 def 1.0 = 1024-sample on/off gate duty cycle) |
+| host: `heddle-host` standalone live chain host (headless-ready, OSC-driven) | ✅ **CI GREEN** (run 38525679263, `0fdb134`): `host_main.cpp` 780-line rewrite; null-mode + OSC 4/4 local; see log 2026-10-14 (1) |
+| host: `heddle-host` `--gui` param-control window (t3inc2) | ✅ **CI GREEN** (run 38733502466, `de0c36c`): local 4/4 verified 2026-10-15 (core 57/57, smoke, OSC 4/4, `--gui` clean exit) + full CI green: `ChainGuiContent` + `HeddleHostWindow` (ResizableWindow) spliced into `host_main.cpp` (~1143 lines); CMake `+juce_graphics`/`juce_gui_basics` on heddle-host; **deadlock fix**: `guiStart()` before audio-thread start (GUI ctor takes `chainLock_` blocking once; audio thread try-locks per 512-sample block → post-startup GUI uses `GenericScopedTryLock` only) |
+| host: CMake (JUCE 8.0.4 sha256-pinned, opt-in HEDDLE_BUILD_HOST) | ✅ pushed; FORMATS VST3 wrapper fix pending CI verification |
 | host: CI (3-OS matrix + smoke param assertions) | ✅ **GREEN 6/6** (run 37984831984, `f6c9d22`): plugin loads, no crash, smoke assertions pass on Linux/macOS/Windows; `crash_diag` instrumentation removed |
-| cli: `weft-render` offline audio→audio (item 8) | ✅ **CI GREEN** (run 38021890348, `df334c1`): param-push + stride-invariant render + CMake + CI render job (WAV selftest + `DryMix=0.5` gain-ratio assert on all 3 OSes). First compile red 3/3 (bare `int64` + const `createWriterFor`) fixed in the same commit |
+| cli: `heddle-render` offline audio→audio (item 8) | ✅ **CI GREEN** (run 38021890348, `df334c1`): param-push + stride-invariant render + CMake + CI render job (WAV selftest + `DryMix=0.5` gain-ratio assert on all 3 OSes). First compile red 3/3 (bare `int64` + const `createWriterFor`) fixed in the same commit |
 | prebuilt binaries / distribution | ✅ **CODE-ONLY policy** (decision 2026-10-15, Miha): all binary assets purged from GitHub (3 release assets from v0.1.5 + 15 workflow artifacts deleted 2026-10-15); `release.yml` removed; new manual-only `build.yml` (workflow_dispatch, 3-OS, 7-day artifact retention) + `weft-ci-artifact-fetch` skill (fetch locally → delete from GH); README re-written (no "quick start binaries"; License section documents JUCE AGPL/commercial + VST3 SDK constraint). Long term: code-only, or buy JUCE commercial licence if we ever distribute commercially |
 | packaging (item 8f) | ✅ root LICENSE (MIT), `--version` + CMake version stamp 0.1.0, README render docs + JUCE AGPLv3/commercial license correction |
 | docs (README/CONFIG/OSC/ARCHITECTURE) | ✅ re-synced to code 2026-10-11 (reply format, curve params, layout, target names) |
-| logo + name (Weft) | 🔨 assets present (assets/logo/) — fix requested 2026-10-14 (Miha); **2026-10-16: VLM (qwen3-vl) inspection done — mark fails at favicon scale (muddy gradient, inner dots vanish), banner tagline "audio chain host" half-hidden behind the W, avatar strokes melt <120px; common fix = thicker strokes + solid high-contrast color + fewer elements + vector master. ⚠️ NAME COLLISION surfaced via web: Oiko Audio "Weft" is an active open-source VST3/CLAP spectral filter (same name + same VST3 format) and 870 GitHub repos named "weft". Naming decision now blocks logo rework (regen first if name changes). Awaiting Miha: keep name vs rename |
-| host: t5 bridge (`weft-host --audio ring` + WeftBridge VST3 + `weft-bridge-test`) | ✅ written + local green: shared-memory SPSC ring pair (`weft.bridge.in/.out`, weft_core `AudioRing`) + OSC control on the headless host; `weft-bridge-test` (weft_core only, no JUCE) spawns the host, asserts Gain-0.5 round-trip (mean 0.25, both channels) + OSC `/chain/query` → `/reply/chain` + `/chain/quit` clean exit. Debugged: JUCE 6-arg `copyFrom` is single-channel (dropped stereo ch1) + `fail()` no-exit cascade masked the OSC check. CI job added (3-OS) — **CI pending** |
+| logo + name (Heddle) | ✅ **2026-10-16: renamed Weft→Heddle** (Miha's call — resolves the Oiko Audio "Weft" VST3 collision) + logo v3 done: VLM-verified mark / mark_light / mark_transparent / banner / avatar_400 in assets/logo/ (v1 palette cyan 0,229,255 → violet 124,92,255, rounded heddle frame, 5 slots center-tallest, control segments at slot bases); delivered to chat via direct Bot API after 3/3 gateway `MEDIA:` sends were lost (sending-media skill, mode 3). Source rename complete — zero `weft` outside dated history; repo rename + v0.1.7 release pending |
+| host: t5 bridge (`heddle-host --audio ring` + HeddleBridge VST3 + `heddle-bridge-test`) | ✅ written + local green (re-verified post-rename 2026-10-16 after clean reconfigure — stale CMakeCache pitfall, see log 2026-10-16 (3)): shared-memory SPSC ring pair (`heddle.bridge.in/.out`, heddle_core `AudioRing`) + OSC control on the headless host; `heddle-bridge-test` (heddle_core only, no JUCE) spawns the host, asserts Gain-0.5 round-trip (mean 0.25, both channels) + OSC `/chain/query` → `/reply/chain` + `/chain/quit` clean exit. Debugged: JUCE 6-arg `copyFrom` is single-channel (dropped stereo ch1) + `fail()` no-exit cascade masked the OSC check. CI job added (3-OS) — **CI pending** (next push) |
 
 ## Log
 
+- **2026-10-16 (3)** — **Weft → Heddle: full source rename + logo v3 + v0.1.7 bump; local build fully green.**
+  Naming decision (Miha): rename to **Heddle** — resolves the Oiko Audio "Weft"
+  VST3 collision found 2026-10-16 (1). Executed: `git mv` of
+  `core/include/weft/` → `core/include/heddle/` and `host/weft_bridge/` →
+  `host/heddle_bridge/`; every source, test, doc, and workflow rewritten —
+  namespace `weft::`→`heddle::`, targets `weft_*`/`weft-*` → `heddle_*`/
+  `heddle-*` (heddle_core, heddle-host, heddle-render, heddle_smoke,
+  heddle_smoke_plugin, heddle_bridge, heddle-bridge-test), ring names
+  `weft.bridge.in/.out` → `heddle.bridge.in/.out`, CMake option
+  `WEFT_BUILD_HOST` → `HEDDLE_BUILD_HOST`, plugin product
+  `WeftSmokePlugin` → `HeddleSmokePlugin`, window `WeftHostWindow` →
+  `HeddleHostWindow`. `git grep -il weft` outside this file's dated history =
+  empty. **Pitfall (cost one red build):** `git mv` leaves a stale CMakeCache
+  still pointing at `host/weft_bridge/` — `rm -rf build-msvc` + full
+  reconfigure is mandatory after a rename (recorded in weft-project-ops).
+  Post-rename local verification (MSVC, clean reconfigure): all targets build;
+  core **57/57 tests, 1689 assertions**; smoke VST3 load OK (Gain + PWM pct);
+  bridge round-trip **PASS** (ratio=0.5000, ch0=ch1=0.250000, OSC OK).
+  Logo v3 regenerated + VLM-verified (qwen3-vl): mark, mark_light,
+  mark_transparent, banner, avatar_400 in assets/logo/ (old weft_*.png
+  removed). Chat delivery: 3/3 gateway `MEDIA:` sends lost to stream
+  interruption (sending-media-to-chat skill, mode 3) → delivered via direct
+  Telegram Bot API (`send_tg_direct.py`, file_ids captured, 5/5).
+  Version: CMake `project(heddle_core VERSION 0.1.7)` (single-sourced into
+  `heddle_version.hpp.in` via `@CMAKE_PROJECT_VERSION@`). Remaining: commit +
+  push, CI, GitHub repo rename (weft → heddle), v0.1.7 release.
 - **2026-10-16 (2)** — **t5 bridge: headless shared-memory ring IPC + WeftBridge VST3 + end-to-end test; local green, CI pending.**
   The live-host↔plugin IPC bridge lands: `weft-host --audio ring` runs the
   chain headless (no audio device) with audio crossing process boundaries

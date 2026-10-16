@@ -22,7 +22,7 @@
 #include <cmath>
 #include "JuceHeader.h"
 
-namespace weft_smoke {
+namespace heddle_smoke {
 
 class SmokeProcessor : public juce::AudioProcessor {
 public:
@@ -65,7 +65,7 @@ public:
         return new SmokeProcessor();
     }
 
-    const juce::String getName() const override { return "WeftSmokePlugin"; }
+    const juce::String getName() const override { return "HeddleSmokePlugin"; }
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override {
         juce::ignoreUnused(sampleRate, samplesPerBlock);
@@ -122,10 +122,10 @@ private:
     int phase_ = 0;
 };
 
-}  // namespace weft_smoke
+}  // namespace heddle_smoke
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() {
-    return weft_smoke::SmokeProcessor::createPluginFilter();
+    return heddle_smoke::SmokeProcessor::createPluginFilter();
 }
 
 // JucePlugin_CreateInstance is provided by the generated JuceHeader.h.

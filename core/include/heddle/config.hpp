@@ -1,12 +1,12 @@
 #pragma once
 #include <string>
 
-#include "weft/chain.hpp"
+#include "heddle/chain.hpp"
 
-namespace weft {
+namespace heddle {
 namespace config {
 
-// Parse a Weft chain config JSON document.
+// Parse a Heddle chain config JSON document.
 //
 // Schema (see docs/CONFIG.md):
 // {
@@ -40,4 +40,4 @@ std::string dump(const ChainConfig& cfg);
 ChainConfig merge(const ChainConfig& base, const ChainConfig& overrideCfg);
 
 }  // namespace config
-}  // namespace weft
+}  // namespace heddle

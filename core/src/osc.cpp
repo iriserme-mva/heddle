@@ -1,8 +1,8 @@
-#include "weft/osc.hpp"
+#include "heddle/osc.hpp"
 
 #include <cstring>
 
-namespace weft {
+namespace heddle {
 
 namespace {
 
@@ -222,4 +222,4 @@ std::string makeReplySlotAddr(int slot) {
 }
 
 }  // namespace osc_addr
-}  // namespace weft
+}  // namespace heddle

@@ -1,4 +1,4 @@
-# Weft architecture
+# Heddle architecture
 
 ## Goal
 
@@ -13,8 +13,8 @@ time-series params).
 ┌────────────────────────────────────────────────────────────┐
 │  host/ (JUCE)                                              │
 │  - JUCE VST2/3 backend (IPluginBackend)                    │
-│  - weft_smoke: headless load + param introspection CLI     │
-│  - weft-render: offline audio→audio renderer (WAV in/out)  │
+│  - heddle_smoke: headless load + param introspection CLI     │
+│  - heddle-render: offline audio→audio renderer (WAV in/out)  │
 │  - (planned) full host app: OSC server + GUI (IO linking), │
 │    ASIO / virtual-cable audio routing                      │
 ├────────────────────────────────────────────────────────────┤
@@ -102,7 +102,7 @@ Build & test: CMake + `ctest` (doctest). CI: GitHub Actions, same commands.
 1. **core** (done, CI green) — model, chain, config, OSC, transport;
    time-series params (static|curve) — done, CI green.
 2. **host/** — JUCE VST3 backend implementing `IPluginBackend` (done, CI
-   green); `weft_smoke` introspection CLI (done, CI green); `weft-render`
+   green); `heddle_smoke` introspection CLI (done, CI green); `heddle-render`
    offline audio→audio with static + curve params (done, CI green); full host
    app with OSC server + minimal GUI + IO linking between chain in/out and
    system devices (ASIO / virtual cables) — in progress.

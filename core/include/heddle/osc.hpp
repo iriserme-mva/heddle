@@ -3,11 +3,11 @@
 #include <string>
 #include <vector>
 
-#include "weft/param.hpp"
+#include "heddle/param.hpp"
 
-namespace weft {
+namespace heddle {
 
-// Minimal OSC 1.0 message model (tag-based, enough for Weft's protocol).
+// Minimal OSC 1.0 message model (tag-based, enough for Heddle's protocol).
 // Types: 'f' float32, 'i' int32, 's' string, 'b' blob.
 struct OscMsg {
     std::string addr;
@@ -85,4 +85,4 @@ std::string makeReplySlotAddr(int slot);
 
 }  // namespace osc_addr
 
-}  // namespace weft
+}  // namespace heddle

@@ -1,12 +1,12 @@
 // Targeted tests for config JSON: schema validation, round-trip, merge.
 #include "doctest.h"
 
-#include "weft/config.hpp"
+#include "heddle/config.hpp"
 
 #include <fstream>
 #include <filesystem>
 
-using namespace weft;
+using namespace heddle;
 
 static const char* kGood = R"({
   "sample_rate": 48000,
@@ -180,7 +180,7 @@ TEST_CASE("merge: override osc port wins, base kept when override silent") {
 
 TEST_CASE("parseFile reads from disk") {
     const std::string path =
-        (std::filesystem::temp_directory_path() / "weft_test_config.json").string();
+        (std::filesystem::temp_directory_path() / "heddle_test_config.json").string();
     {
         std::ofstream f(path, std::ios::binary);
         f << kGood;
@@ -190,7 +190,7 @@ TEST_CASE("parseFile reads from disk") {
     REQUIRE(config::parseFile(path, cfg, &err));
     CHECK(cfg.slots.size() == 2);
     const std::string missing =
-        (std::filesystem::temp_directory_path() / "weft_does_not_exist_xyz.json").string();
+        (std::filesystem::temp_directory_path() / "heddle_does_not_exist_xyz.json").string();
     ChainConfig bad;
     CHECK_FALSE(config::parseFile(missing, bad, &err));
     std::remove(path.c_str());

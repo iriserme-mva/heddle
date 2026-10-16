@@ -2,13 +2,13 @@
 // slot resolution / change propagation.
 #include "doctest.h"
 
-#include "weft/chain.hpp"
+#include "heddle/chain.hpp"
 
 #include <cmath>
 #include <map>
 #include <set>
 
-using namespace weft;
+using namespace heddle;
 
 // Mock backend: a fixed param surface per plugin path, records setParam calls.
 class MockBackend : public IPluginBackend {

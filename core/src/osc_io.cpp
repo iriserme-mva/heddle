@@ -1,4 +1,4 @@
-#include "weft/osc_io.hpp"
+#include "heddle/osc_io.hpp"
 
 // Portable UDP: Winsock2 on Windows, BSD sockets elsewhere.
 #ifdef _WIN32
@@ -33,7 +33,7 @@
 #include <windows.h>
 #endif
 
-namespace weft {
+namespace heddle {
 
 namespace {
 #ifdef _WIN32
@@ -205,4 +205,4 @@ bool OscUdp::sendTo(const OscMsg& msg, const SourceAddr& dest) {
     return n == (int)data.size();
 }
 
-}  // namespace weft
+}  // namespace heddle

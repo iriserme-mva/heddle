@@ -1,13 +1,13 @@
-# Weft
+# Heddle
 
-**Weft** — a C++ audio-plugin chain host: load VST 2 / VST 3 plugins into an
+**Heddle** — a C++ audio-plugin chain host: load VST 2 / VST 3 plugins into an
 ordered processing chain, drive every parameter live over **OSC**, describe the
 whole setup in a small **JSON** config, and run it offline from a CLI.
 
-> *Weft*: the longitudinal threads in weaving that the warp threads interlace
+> *Heddle*: the longitudinal threads in weaving that the warp threads interlace
 with — here, the plugins whose signals are interlaced into one chain.
 
-![Weft banner](assets/logo/weft_banner.png)
+![Heddle banner](assets/logo/heddle_banner.png)
 
 ---
 
@@ -16,11 +16,11 @@ with — here, the plugins whose signals are interlaced into one chain.
 | Layer | What it is | State |
 |---|---|---|
 | `core/` | Platform-agnostic C++17 library: param model, chain, JSON config, OSC wire + addressing, UDP transport, time-series params (static or curve) | **building & tested** (39/39 test cases, 253 assertions) |
-| `host/` | JUCE-based VST3 wrapper backend + `weft_smoke` introspection CLI + `weft-render` offline audio→audio CLI | **building & CI-tested** |
+| `host/` | JUCE-based VST3 wrapper backend + `heddle_smoke` introspection CLI + `heddle-render` offline audio→audio CLI | **building & CI-tested** |
 
 Progress is tracked in [STATUS.md](STATUS.md).
 
-## What Weft does
+## What Heddle does
 
 1. **Chains VST2/3 plugins** in an ordered processing graph.
 2. **Loads per-plugin / per-param default values from JSON** — one config file
@@ -50,20 +50,20 @@ pwsh scripts\build-all.ps1
 ```
 
 Binaries land in `build/` (core, MSYS2) and `build-msvc/host/Release/`
-(host, MSVC): `weft-host.exe`, `weft-render.exe`, `weft_smoke.exe` and the
-`WeftSmokePlugin.vst3` test plugin.
+(host, MSVC): `heddle-host.exe`, `heddle-render.exe`, `heddle_smoke.exe` and the
+`HeddleSmokePlugin.vst3` test plugin.
 
 Or build just the render CLI by hand:
 
 ```sh
-./weft-render input.wav chain.json output.wav --bits 16
+./heddle-render input.wav chain.json output.wav --bits 16
 ```
 
 That's the whole UX: one input WAV, one JSON config (see
 [examples/chain.json](examples/chain.json) for the shape — each slot names a
 VST3 file and its `params`), one output WAV at the input's sample rate.
 
-> The plugin paths in the config point at *your* VST3 files — Weft ships
+> The plugin paths in the config point at *your* VST3 files — Heddle ships
 > without any third-party plugins.
 
 ## Building the core (local)
@@ -87,8 +87,8 @@ The JUCE host layer is opt-in (it fetches JUCE 8.0.4 at configure time, so
 core-only builds stay network-free):
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DWEFT_BUILD_HOST=ON
-cmake --build build -j4 --target weft_smoke weft_smoke_plugin_VST3 weft-render
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DHEDDLE_BUILD_HOST=ON
+cmake --build build -j4 --target heddle_smoke heddle_smoke_plugin_VST3 heddle-render
 ```
 
 > JUCE 8 dropped MinGW, so the host layer builds on MSVC (Windows), AppleClang
@@ -97,12 +97,12 @@ cmake --build build -j4 --target weft_smoke weft_smoke_plugin_VST3 weft-render
 
 ## Rendering offline (audio → audio)
 
-`weft-render` reads a WAV, runs it through the chain described by a JSON
+`heddle-render` reads a WAV, runs it through the chain described by a JSON
 config, and writes a WAV. No resampling — the output keeps the input's sample
 rate (must be a standard 8k–384k rate) and no audio device is touched.
 
 ```sh
-weft-render input.wav chain.json output.wav [--bits 16|24|32] [--version]
+heddle-render input.wav chain.json output.wav [--bits 16|24|32] [--version]
 ```
 
 - The chain comes from the config's `chain` array; each slot's `params`
@@ -123,9 +123,9 @@ working directory (absolute paths work too). See
 ## Layout
 
 ```
-weft/
+heddle/
 ├── core/
-│   ├── include/weft/
+│   ├── include/heddle/
 │   │   ├── param.hpp      # Param / ParamSet model
 │   │   ├── curve.hpp      # time-series param (static float or curve)
 │   │   ├── chain.hpp      # Chain + IPluginBackend
@@ -134,7 +134,7 @@ weft/
 │   │   └── osc_io.hpp     # UDP OSC transport (source tracking)
 │   ├── src/               # implementations
 │   └── tests/             # targeted doctest suites
-├── host/                  # JUCE backend + weft_smoke + weft-render (opt-in)
+├── host/                  # JUCE backend + heddle_smoke + heddle-render (opt-in)
 ├── docs/                  # CONFIG.md, OSC.md, ARCHITECTURE.md
 ├── examples/chain.json    # example rig config
 ├── assets/logo/           # banner, avatar, mark
@@ -149,26 +149,26 @@ weft/
 
 ## Prior art
 
-Weft is informed by (and deliberately distinct from):
+Heddle is informed by (and deliberately distinct from):
 
 - **ReaPlugga** (ReaPlugga/ReaPlugga on GitHub) — hosts VST2 plugins in a
   ReWire/ASIO context; no param-level OSC.
-- **JUCE `AudioPluginHost` / HostPluginDemo** — reference hosting; Weft builds
+- **JUCE `AudioPluginHost` / HostPluginDemo** — reference hosting; Heddle builds
   the host layer on JUCE hosting and adds the chain+OSC+config layer above it.
 - **getdunne/juce-plugin-wrapper** — minimal JUCE VST wrapper as a starting
   point for the backend contract.
 
 ## License
 
-Weft's own source is **MIT**-licensed (see [LICENSE](LICENSE)). The plugin
-ecosystem is what you bring in — Weft neither bundles nor distributes any
+Heddle's own source is **MIT**-licensed (see [LICENSE](LICENSE)). The plugin
+ecosystem is what you bring in — Heddle neither bundles nor distributes any
 third-party plugin.
 
 **Code-only policy.** This repo publishes **source only**: no prebuilt
 binaries are committed, released, or kept on GitHub. Building is done locally
 (`scripts/build-all.ps1` on Windows) or on demand via the manual
 `build` workflow (`.github/workflows/build.yml`), whose artifacts are pulled
-down locally and then deleted from GitHub. (The earlier `weft-render` release
+down locally and then deleted from GitHub. (The earlier `heddle-render` release
 artifacts, v0.1.0–v0.1.5, have been removed from GitHub for the reason below.)
 
 **Why no binaries.** The host layer links two dependencies whose *binary*
@@ -180,6 +180,6 @@ distribution is restricted:
   host layer with a corresponding-source offer.
 - **VST3 SDK** (Steinberg) — proprietary (signed agreement) or **GPLv3**.
 
-Core-only use stays plain MIT. If Weft is ever distributed commercially as
+Core-only use stays plain MIT. If Heddle is ever distributed commercially as
 prebuilt binaries, the plan is to buy the JUCE commercial licence (keeping MIT);
 until then the project stays code-only.

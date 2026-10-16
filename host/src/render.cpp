@@ -1,6 +1,6 @@
-// weft-render — offline audio→audio renderer.
+// heddle-render — offline audio→audio renderer.
 //
-//   weft-render <input.wav> <chain.json> <output.wav> [--bits 16|24|32]
+//   heddle-render <input.wav> <chain.json> <output.wav> [--bits 16|24|32]
 //
 // Reads an input WAV at its own sample rate (no resampling, ever), runs it
 // through the JUCE-hosted plugin chain described by the config (the config's
@@ -21,7 +21,7 @@
 // the reader's rate is passed through unchanged.
 //
 // Headless: no audio devices, no GUI — the JUCE message thread is used for
-// plugin hosting only (same pattern as weft_smoke).
+// plugin hosting only (same pattern as heddle_smoke).
 //
 // Stride design: JuceBackend::process reads its flat `in`/`out` pointers as
 // planar with per-channel stride == `frames`, and JUCE AudioBuffer lays
@@ -47,26 +47,26 @@
 #include <juce_audio_formats/juce_audio_formats.h>  // WavAudioFormat, AudioFormatReader
 
 #include "JuceBackend.hpp"
-#include "weft/chain.hpp"
-#include "weft/config.hpp"
+#include "heddle/chain.hpp"
+#include "heddle/config.hpp"
 
-// Version is injected at build time by CMake (configure_file -> weft_version.hpp,
+// Version is injected at build time by CMake (configure_file -> heddle_version.hpp,
 // on this target's include path via target_include_directories).
-#include "weft_version.hpp"
-#ifndef WEFT_VERSION_STRING
-#define WEFT_VERSION_STRING "unknown"
+#include "heddle_version.hpp"
+#ifndef HEDDLE_VERSION_STRING
+#define HEDDLE_VERSION_STRING "unknown"
 #endif
 
 namespace {
 
 int fail(const std::string& msg) {
-    std::fprintf(stderr, "weft-render: %s\n", msg.c_str());
+    std::fprintf(stderr, "heddle-render: %s\n", msg.c_str());
     return 1;
 }
 
 void usage() {
     std::fprintf(stderr,
-                 "usage: weft-render [--version] <input.wav> <chain.json> <output.wav> [--bits 16|24|32]\n"
+                 "usage: heddle-render [--version] <input.wav> <chain.json> <output.wav> [--bits 16|24|32]\n"
                  "       Renders input.wav through the JUCE-hosted chain from chain.json\n"
                  "       to output.wav (same sample rate, no resampling).\n"
                  "       --bits: output bit depth, 16, 24, or 32 (default 32 = float WAV).\n"
@@ -79,7 +79,7 @@ int main(int argc, char** argv) {
     // Pre-scan for --version so it works before/without the positional args.
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--version") == 0 || std::strcmp(argv[i], "-V") == 0) {
-            std::printf("weft-render %s\n", WEFT_VERSION_STRING);
+            std::printf("heddle-render %s\n", HEDDLE_VERSION_STRING);
             return 0;
         }
     }
@@ -98,7 +98,7 @@ int main(int argc, char** argv) {
             if (b != 16 && b != 24 && b != 32) { usage(); return 1; }
             bits = b;
         } else {
-            std::fprintf(stderr, "weft-render: unknown option '%s'\n", argv[i]);
+            std::fprintf(stderr, "heddle-render: unknown option '%s'\n", argv[i]);
             usage();
             return 1;
         }
@@ -118,18 +118,18 @@ int main(int argc, char** argv) {
     if (sampleRate <= 0.0 || inChannels < 1)
         return fail("input WAV has an invalid sample rate or channel count");
     if (total <= 0)
-        std::fprintf(stderr, "weft-render: warning: input is empty, writing empty output\n");
+        std::fprintf(stderr, "heddle-render: warning: input is empty, writing empty output\n");
 
     // ---- load chain -------------------------------------------------------
-    weft::ChainConfig cfg;
+    heddle::ChainConfig cfg;
     std::string err;
-    if (!weft::config::parseFile(cfgPath, cfg, &err))
+    if (!heddle::config::parseFile(cfgPath, cfg, &err))
         return fail("bad config: " + err);
     if (cfg.slots.empty())
         return fail("config has no chain slots: " + cfgPath);
 
-    weft::JuceBackend backend;
-    weft::Chain chain(backend);
+    heddle::JuceBackend backend;
+    heddle::Chain chain(backend);
     if (!chain.load(cfg, &err))
         return fail("chain load failed: " + err);
 
@@ -149,12 +149,12 @@ int main(int argc, char** argv) {
 
     const int width = std::max(std::max(inChannels, 2), backend.busWidth());
 
-    // Curve params: a slot's param can be a time-series (see weft/curve.hpp).
+    // Curve params: a slot's param can be a time-series (see heddle/curve.hpp).
     // At each block's start we re-evaluate the slot's params at the absolute
     // sample position and push them to the plugin, so the automation follows
     // the timeline as the render advances. Slots with only static params are
     // untouched (their values were already pushed at load time).
-    std::vector<const weft::SlotConfig*> curvySlots;
+    std::vector<const heddle::SlotConfig*> curvySlots;
     for (const auto& slot : cfg.slots) {
         if (slot.enabled)
             for (const auto& kv : slot.params)
@@ -212,7 +212,7 @@ int main(int argc, char** argv) {
             const int64_t frame = pos - n;
             for (const auto* slot : curvySlots) {
                 backend.setParams(slot->id,
-                                  weft::evalParams(slot->params, frame));
+                                  heddle::evalParams(slot->params, frame));
             }
         }
 
@@ -247,7 +247,7 @@ int main(int argc, char** argv) {
     writer->flush();
     writer = nullptr;  // closes + deletes the owned stream
 
-    std::printf("weft-render: %s (%.0f Hz, %d ch, %lld frames) -> %s (%d-bit WAV, %d slot(s))\n",
+    std::printf("heddle-render: %s (%.0f Hz, %d ch, %lld frames) -> %s (%d-bit WAV, %d slot(s))\n",
                 inPath.c_str(), sampleRate, inChannels, (long long)total,
                 outPath.c_str(), bits, (int)activeSlots.size());
     return 0;

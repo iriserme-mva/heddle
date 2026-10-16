@@ -3,10 +3,10 @@
 #include <string>
 #include <vector>
 
-#include "weft/curve.hpp"
-#include "weft/param.hpp"
+#include "heddle/curve.hpp"
+#include "heddle/param.hpp"
 
-namespace weft {
+namespace heddle {
 
 // One plugin slot in the chain.
 struct SlotConfig {
@@ -150,4 +150,4 @@ private:
     ChangeCallback changeCb_;
 };
 
-}  // namespace weft
+}  // namespace heddle

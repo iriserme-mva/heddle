@@ -1,6 +1,6 @@
-# Weft config format (JSON)
+# Heddle config format (JSON)
 
-A Weft config describes the whole rig: audio rates and an ordered list of
+A Heddle config describes the whole rig: audio rates and an ordered list of
 plugin slots with per-param normalized values.
 
 ```json
@@ -93,7 +93,7 @@ Any param may be a **static** number (the backward-compatible form) or a
 - Static values and curves may be mixed freely in one `params` object. The
   value at frame 0 is the load-time value.
 
-`weft-render` evaluates per-slot params at every block, so a curve automates
+`heddle-render` evaluates per-slot params at every block, so a curve automates
 the param across the render (static params are unchanged).
 
 ## Example

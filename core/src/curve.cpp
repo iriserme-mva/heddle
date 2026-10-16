@@ -1,9 +1,9 @@
-#include "weft/curve.hpp"
+#include "heddle/curve.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-namespace weft {
+namespace heddle {
 
 namespace {
 
@@ -41,4 +41,4 @@ float Curve::eval(int64_t frame) const {
     return clamp01f(lo.second + t * (hi.second - lo.second));
 }
 
-}  // namespace weft
+}  // namespace heddle

@@ -7,7 +7,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-namespace weft {
+namespace heddle {
 
 namespace {
 
@@ -20,9 +20,9 @@ uint32_t paramIdFromJuce(const juce::String& id, uint32_t fallbackId) {
     return fallbackId;
 }
 
-// Map a single JUCE parameter onto the weft::Param model.
-weft::Param mapParam(const juce::AudioProcessorParameter* p, uint32_t fallbackId) {
-    weft::Param param;
+// Map a single JUCE parameter onto the heddle::Param model.
+heddle::Param mapParam(const juce::AudioProcessorParameter* p, uint32_t fallbackId) {
+    heddle::Param param;
 
     const auto* hosted =
         dynamic_cast<const juce::HostedAudioProcessorParameter*>(p);
@@ -65,13 +65,13 @@ weft::Param mapParam(const juce::AudioProcessorParameter* p, uint32_t fallbackId
             items.push_back(sa[i].toStdString());
         if (!items.empty()) {
             param.listItems = std::move(items);
-            param.kind = weft::ParamKind::Enum;
+            param.kind = heddle::ParamKind::Enum;
         } else {
-            param.kind = weft::ParamKind::Float;  // stepped float, no labels
+            param.kind = heddle::ParamKind::Float;  // stepped float, no labels
         }
     } else {
         param.stepCount = 0;
-        param.kind = weft::ParamKind::Float;
+        param.kind = heddle::ParamKind::Float;
     }
 
     return param;
@@ -90,9 +90,9 @@ bool JuceBackend::load(const SlotConfig& slot, ParamSet& outParams) {
     // resolve to their frame-0 value). The model update is for
     // introspection; the push below is what actually changes the audio.
     for (const auto& kv : slot.params) {
-        weft::Param* p = outParams.findByName(kv.first);
+        heddle::Param* p = outParams.findByName(kv.first);
         if (p != nullptr)
-            p->value = weft::Param::clamp01(kv.second.atStart());
+            p->value = heddle::Param::clamp01(kv.second.atStart());
     }
     return setParams(slot.id, evalParams(slot.params, 0));
 }
@@ -105,7 +105,7 @@ bool JuceBackend::setParams(const std::string& slotId,
         const auto& params = slot.instance->getParameters();
         for (const auto& kv : namedValues) {
             const std::string name = kv.first;
-            const float value = weft::Param::clamp01(kv.second);
+            const float value = heddle::Param::clamp01(kv.second);
             for (int i = 0; i < params.size(); ++i) {
                 if (params[i]->getName(128).toStdString() != name)
                     continue;
@@ -126,7 +126,7 @@ bool JuceBackend::loadSlot(const std::string& slotId, const std::string& path,
     outParams = ParamSet{};
 
     const juce::File file(juce::String(path.c_str()));
-    // A VST3 plugin is a bundle *directory* (WeftSmokePlugin.vst3/Contents/…);
+    // A VST3 plugin is a bundle *directory* (HeddleSmokePlugin.vst3/Contents/…);
     // a VST2 plugin is a bare file (.so / .dll / .fx). Accept either and let
     // the format manager below decide which — fileMightContainThisPluginType +
     // findAllTypesForFile handle the file-vs-bundle distinction. A bare
@@ -285,4 +285,4 @@ float JuceBackend::paramValue(const std::string& slotId, uint32_t id) const {
     return -1.f;  // slot not found
 }
 
-}  // namespace weft
+}  // namespace heddle

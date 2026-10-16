@@ -1,4 +1,4 @@
-// ring_latency — instrumented latency probe for the Weft shared-memory ring.
+// ring_latency — instrumented latency probe for the Heddle shared-memory ring.
 //
 // Subcommands:
 //   bench
@@ -20,10 +20,10 @@
 //     compute delay. Relative (not absolute) because float32 cannot hold the
 //     full absolute ns counter with any precision.
 //
-// Build: part of the weft_core tree (see CMakeLists). No external deps beyond
-// the C++17 stdlib and weft_core.
+// Build: part of the heddle_core tree (see CMakeLists). No external deps beyond
+// the C++17 stdlib and heddle_core.
 
-#include <weft/ring.hpp>
+#include <heddle/ring.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -70,7 +70,7 @@ static inline void yield() {
 
 namespace {
 
-using weft::AudioRing;
+using heddle::AudioRing;
 
 struct Stats {
   int64_t mean = 0, median = 0, max = 0;
@@ -434,7 +434,7 @@ int runXProc(int ch, size_t block, size_t blocks, size_t cap) {
               100.0 * static_cast<double>(s.mean) /
                   (blockMs * 1e6),
               std::to_string(blockMs).c_str());
-  std::printf("  => the DAW-to-Weft hop adds ~%.1f%% of one block of buffer; "
+  std::printf("  => the DAW-to-Heddle hop adds ~%.1f%% of one block of buffer; "
               "the rest of the perceived latency is the fixed 1-block "
               "alignment.\n",
               100.0 * static_cast<double>(s.mean) / (blockMs * 1e6));

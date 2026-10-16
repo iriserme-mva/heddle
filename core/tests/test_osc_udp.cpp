@@ -3,8 +3,8 @@
 // no fixed ports, no network, safe in CI sandboxes.
 #include "doctest.h"
 
-#include "weft/osc.hpp"
-#include "weft/osc_io.hpp"
+#include "heddle/osc.hpp"
+#include "heddle/osc_io.hpp"
 
 #include <chrono>
 #include <thread>
@@ -17,7 +17,7 @@ static void sleepMs(int ms) { ::Sleep(uint32_t(ms)); }
 static void sleepMs(int ms) { ::usleep(useconds_t(ms * 1000)); }
 #endif
 
-using namespace weft;
+using namespace heddle;
 
 namespace {
 // poll() with a bounded retry window (UDP loopback is fast but not

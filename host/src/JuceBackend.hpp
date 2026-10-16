@@ -4,20 +4,20 @@
 #include <string>
 #include <vector>
 
-#include "weft/chain.hpp"
-#include "weft/param.hpp"
+#include "heddle/chain.hpp"
+#include "heddle/param.hpp"
 
 namespace juce {
 class AudioPluginInstance;
 }
 
-namespace weft {
+namespace heddle {
 
-// JUCE-backed implementation of weft::IPluginBackend.
+// JUCE-backed implementation of heddle::IPluginBackend.
 //
 // Loads VST3 plugin instances (the only format enabled in this build —
 // see JUCE_PLUGINHOST_VST3) and maps their parameter surface onto the
-// platform-agnostic weft::Param / weft::ParamSet model. Normalized
+// platform-agnostic heddle::Param / heddle::ParamSet model. Normalized
 // 0..1 space is used everywhere, matching the core library.
 //
 // All JUCE calls here happen on the calling thread, which main() makes
@@ -82,4 +82,4 @@ private:
     std::vector<Slot> slots_;
 };
 
-}  // namespace weft
+}  // namespace heddle

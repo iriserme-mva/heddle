@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace weft {
+namespace heddle {
 
 // Parameter semantics, mirroring VST2 kParam* flags / VST3 PType.
 enum class ParamKind : uint8_t {
@@ -96,4 +96,4 @@ struct ParamSet {
     }
 };
 
-}  // namespace weft
+}  // namespace heddle

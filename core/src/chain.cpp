@@ -1,9 +1,9 @@
-#include "weft/chain.hpp"
+#include "heddle/chain.hpp"
 
 #include <cstring>
 #include <cstdlib>
 
-namespace weft {
+namespace heddle {
 
 namespace {
 std::string normalizePath(const std::string& p) {
@@ -145,4 +145,4 @@ float Chain::setParamById(const std::string& slotToken, uint32_t id, float norm)
     return p->value;
 }
 
-}  // namespace weft
+}  // namespace heddle

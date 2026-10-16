@@ -1,4 +1,4 @@
-name: weft
+name: heddle
 
 on:
   push:
@@ -60,19 +60,19 @@ jobs:
         if: runner.os == 'Windows'
         # windows-latest is the windows-2025-vs2026 image: ships VS 2026 +
         # CMake 4.4.x (has the "Visual Studio 18 2026" generator); no VS 2022.
-        run: cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DWEFT_BUILD_HOST=ON
+        run: cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DHEDDLE_BUILD_HOST=ON
 
       - name: Configure (Linux / macOS – Ninja)
         if: runner.os != 'Windows'
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DWEFT_BUILD_HOST=ON
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DHEDDLE_BUILD_HOST=ON
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: cmake --build build --config Release --target weft_smoke weft_smoke_plugin_VST3 weft-render weft-host weft-bridge-test weft_bridge_plugin_VST3 --verbose
+        run: cmake --build build --config Release --target heddle_smoke heddle_smoke_plugin_VST3 heddle-render heddle-host heddle-bridge-test heddle_bridge_plugin_VST3 --verbose
 
       - name: Build (Linux / macOS)
         if: runner.os != 'Windows'
-        run: cmake --build build --target weft_smoke weft_smoke_plugin_VST3 weft-render weft-host weft-bridge-test weft_bridge_plugin_VST3 -v
+        run: cmake --build build --target heddle_smoke heddle_smoke_plugin_VST3 heddle-render heddle-host heddle-bridge-test heddle_bridge_plugin_VST3 -v
 
       - name: Locate built VST3 plugin
         id: loc
@@ -82,11 +82,11 @@ jobs:
           #   win (VS gen): build/PlugIns/*_artefacts/Release/VST3/<Product>.vst3 (dir)
           #   lin:          build/PlugIns/*_artefacts/VST3/<Product>.vst3 (dir)
           #   mac:          build/PlugIns/*_artefacts/VST3/<Product>.vst3/Contents/Resources/moduleinfo.json
-          # Two VST3s are now built (smoke + WeftBridge). This step targets
+          # Two VST3s are now built (smoke + HeddleBridge). This step targets
           # the SMOKE plugin by path prefix — it is the one the smoke/render/
           # bridge steps chain into. find prints the bundle dir before
           # descending into it, so head -n1 is the bundle on every platform.
-          find build -path '*WeftSmokePlugin.vst3*' > plugin_hits.txt
+          find build -path '*HeddleSmokePlugin.vst3*' > plugin_hits.txt
           if [ ! -s plugin_hits.txt ]; then
             echo "::error::no VST3 plugin artefact found under build/"
             exit 1
@@ -105,16 +105,16 @@ jobs:
         shell: bash
         run: |
           # Binary layout:
-          #   win (VS gen): build/Release/weft_smoke.exe
-          #   lin/mac:      build/weft_smoke
-          smoke=$(find build -name 'weft_smoke' -o -name 'weft_smoke.exe' | head -n1)
+          #   win (VS gen): build/Release/heddle_smoke.exe
+          #   lin/mac:      build/heddle_smoke
+          smoke=$(find build -name 'heddle_smoke' -o -name 'heddle_smoke.exe' | head -n1)
           [ -n "$smoke" ] && [ -x "$smoke" ] || { echo "::error::smoke binary not found"; exit 1; }
           "$smoke" "${{ steps.loc.outputs.path }}" > smoke_out.json
           cat smoke_out.json
           python3 - <<'EOF'
           import json
           d = json.load(open("smoke_out.json"))
-          assert d["pluginName"] == "WeftSmokePlugin", d["pluginName"]
+          assert d["pluginName"] == "HeddleSmokePlugin", d["pluginName"]
           names = {p["title"] for p in d["params"]}
           # The VST3 wrapper (JUCE, plugin side) auto-injects a standard
           # "Bypass" param (id 'byps' = 0x62797073), so the host reports the
@@ -147,8 +147,8 @@ jobs:
           # values below are NON-defaults (plugin defaults are 1.0 / 1.0): if
           # either were ignored the ratio would be 0.5 (duty ignored) or
           # 0.625 (Gain ignored), not 0.3125.
-          render=$(find build -name 'weft-render' -o -name 'weft-render.exe' | head -n1)
-          [ -n "$render" ] && [ -x "$render" ] || { echo "::error::weft-render binary not found"; exit 1; }
+          render=$(find build -name 'heddle-render' -o -name 'heddle-render.exe' | head -n1)
+          [ -n "$render" ] && [ -x "$render" ] || { echo "::error::heddle-render binary not found"; exit 1; }
 
           # Deterministic input WAV (2048-frame stereo 44100 Hz 16-bit, constant
           # 0.5) + a one-slot chain config with Gain=0.5 and "PWM pct"=0.625
@@ -187,7 +187,7 @@ jobs:
           print("render config plugin =", plugin)
           PYEOF
 
-          "$render" in.wav render_chain.json out.wav --bits 16 || { echo "::error::weft-render failed"; exit 1; }
+          "$render" in.wav render_chain.json out.wav --bits 16 || { echo "::error::heddle-render failed"; exit 1; }
 
           # Verify: output is 2048 frames / 44100 Hz / stereo / 16-bit PCM, and
           # the gain ratio out/in is 0.3125 (= configured Gain 0.5 x
@@ -239,7 +239,7 @@ jobs:
           # open), so it cannot mask a failure. Mean gain = 0.6875. If curve
           # automation were ignored — stuck at the load-time value (0.5) or at
           # the last value (1.0) — the mean would be 0.5 or 1.0, not 0.6875.
-          "$render" in.wav render_curve.json out_curve.wav --bits 16 || { echo "::error::weft-render (curve) failed"; exit 1; }
+          "$render" in.wav render_curve.json out_curve.wav --bits 16 || { echo "::error::heddle-render (curve) failed"; exit 1; }
 
           python3 - <<'PYEOF'
           import struct
@@ -278,28 +278,28 @@ jobs:
       - name: Bridge round-trip (audio + OSC over shared-memory rings, headless)
         shell: bash
         run: |
-          # The t5 bridge end-to-end, WITHOUT loading the WeftBridge VST3
+          # The t5 bridge end-to-end, WITHOUT loading the HeddleBridge VST3
           # (that is a CI compile check; the real audio path is the ring
-          # pair). weft-bridge-test spawns weft-host headless with
+          # pair). heddle-bridge-test spawns heddle-host headless with
           #   --audio ring --osc-port <auto>
           # chains the SMOKE plugin at Gain=0.5, writes a 0.5 constant into
-          # weft.bridge.in, reads weft.bridge.out, and asserts the round-trip
+          # heddle.bridge.in, reads heddle.bridge.out, and asserts the round-trip
           # mean is 0.25 (= 0.5 * Gain 0.5, "PWM pct"=1.0 gate wide open).
           # It then drives OSC: /chain/query -> /reply/chain (must list the
           # "smoke" slot), and /chain/quit -> /reply/status "quitting" with a
           # clean exit 0.
           #
-          # Headless by construction: the test binary links only weft_core
-          # (no JUCE), and weft-host runs with no --gui. JUCE's X11 init
+          # Headless by construction: the test binary links only heddle_core
+          # (no JUCE), and heddle-host runs with no --gui. JUCE's X11 init
           # fails gracefully on a display-less Linux runner (no crash), so no
           # Xvfb / X server is required. No JACK dependency (JUCE loads it
           # at runtime only, and --audio ring never touches a device).
           # Binary layout (same as the other CLIs):
-          #   win (VS gen): build/Release/weft-bridge-test.exe
-          #   lin/mac:      build/weft-bridge-test
-          bridge=$(find build -name 'weft-bridge-test' -o -name 'weft-bridge-test.exe' | head -n1)
-          [ -n "$bridge" ] && [ -x "$bridge" ] || { echo "::error::weft-bridge-test binary not found"; exit 1; }
-          host=$(find build -name 'weft-host' -o -name 'weft-host.exe' | head -n1)
-          [ -n "$host" ] && [ -x "$host" ] || { echo "::error::weft-host binary not found"; exit 1; }
+          #   win (VS gen): build/Release/heddle-bridge-test.exe
+          #   lin/mac:      build/heddle-bridge-test
+          bridge=$(find build -name 'heddle-bridge-test' -o -name 'heddle-bridge-test.exe' | head -n1)
+          [ -n "$bridge" ] && [ -x "$bridge" ] || { echo "::error::heddle-bridge-test binary not found"; exit 1; }
+          host=$(find build -name 'heddle-host' -o -name 'heddle-host.exe' | head -n1)
+          [ -n "$host" ] && [ -x "$host" ] || { echo "::error::heddle-host binary not found"; exit 1; }
           "$bridge" "$host" "${{ steps.loc.outputs.path }}"
           echo "BRIDGE OK"

@@ -1,9 +1,9 @@
-# Weft OSC protocol
+# Heddle OSC protocol
 
 Transport: **OSC 1.0 over UDP** (the same framing works over TCP).
 Types used: `f` (float32), `i` (int32), `s` (string), `b` (blob).
 
-The Weft host listens on a configurable port (default `9001`) and optionally
+The Heddle host listens on a configurable port (default `9001`) and optionally
 sends replies to the client's source address.
 
 ## Addressing
@@ -62,7 +62,7 @@ message sets by *param name*; with `int, float` it sets by *param id*.
 
 ## Implementation notes
 
-- `OscUdp` (core/include/weft/osc_io.hpp): `bind()` to listen, `openOut()` to
+- `OscUdp` (core/include/heddle/osc_io.hpp): `bind()` to listen, `openOut()` to
   send, `poll()` is non-blocking — the host calls it from its timer.
  `poll(msg, &src)` captures the sender address of the last packet and
  `sendTo(msg, src)` replies to that explicit address (client-reply routing).

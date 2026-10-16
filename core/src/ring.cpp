@@ -1,4 +1,4 @@
-#include "weft/ring.hpp"
+#include "heddle/ring.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -24,7 +24,7 @@
 #include <unistd.h>
 #endif
 
-namespace weft {
+namespace heddle {
 
 namespace {
 
@@ -146,11 +146,11 @@ bool waitReady(RingHeader* h, int timeoutMs) {
 
 bool validateHeader(const RingHeader* h, std::string& err) {
   if (h->magic != kMagic) {
-    err = "not a weft audio ring (bad magic)";
+    err = "not a heddle audio ring (bad magic)";
     return false;
   }
   if (h->version != kVersion) {
-    err = "weft audio ring version mismatch";
+    err = "heddle audio ring version mismatch";
     return false;
   }
   const uint32_t cap = h->capacityFrames;
@@ -209,10 +209,10 @@ AudioRing AudioRing::create(const std::string& name, size_t capacityFrames, int 
 
 #ifdef _WIN32
   impl->isWin32 = true;
-  // Plain (session) namespace name: Weft and the Ableton bridge run in the
+  // Plain (session) namespace name: Heddle and the Ableton bridge run in the
   // same user session, and leading-backslash ("global") forms are rejected
   // with ERROR_INVALID_PARAMETER by CreateFileMappingW on this platform.
-  const std::string flat = "weft.ring." + impl->name;
+  const std::string flat = "heddle.ring." + impl->name;
   impl->platformName = flat;
   const int wlen = ::MultiByteToWideChar(CP_UTF8, 0, flat.c_str(), -1, nullptr, 0);
   std::wstring wname;
@@ -244,7 +244,7 @@ AudioRing AudioRing::create(const std::string& name, size_t capacityFrames, int 
     return AudioRing();
   }
 #else
-  impl->platformName = "/weft.ring." + impl->name;
+  impl->platformName = "/heddle.ring." + impl->name;
   if (impl->platformName.size() > 120) impl->platformName.resize(120);
   impl->fd = ::shm_open(impl->platformName.c_str(), O_CREAT | O_EXCL | O_RDWR, 0600);
   if (impl->fd < 0) {
@@ -306,7 +306,7 @@ AudioRing AudioRing::open(const std::string& name, std::string* err, int timeout
   size_t total = 0;
 #ifdef _WIN32
   impl->isWin32 = true;
-  const std::string flat = "weft.ring." + impl->name;
+  const std::string flat = "heddle.ring." + impl->name;
   const int wlen = ::MultiByteToWideChar(CP_UTF8, 0, flat.c_str(), -1, nullptr, 0);
   std::wstring wname;
   if (wlen > 0) {
@@ -350,7 +350,7 @@ AudioRing AudioRing::open(const std::string& name, std::string* err, int timeout
     return AudioRing();
   }
 #else
-  impl->platformName = "/weft.ring." + impl->name;
+  impl->platformName = "/heddle.ring." + impl->name;
   if (impl->platformName.size() > 120) impl->platformName.resize(120);
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
   for (;;) {
@@ -413,7 +413,7 @@ bool AudioRing::exists(const std::string& name) {
   if (name.empty()) return false;
   const std::string s = sanitizeName(name);
 #ifdef _WIN32
-  const std::string flat = "weft.ring." + s;
+  const std::string flat = "heddle.ring." + s;
   const int wlen = ::MultiByteToWideChar(CP_UTF8, 0, flat.c_str(), -1, nullptr, 0);
   std::wstring wname;
   if (wlen > 0) {
@@ -427,7 +427,7 @@ bool AudioRing::exists(const std::string& name) {
   }
   return false;
 #else
-  std::string p = "/weft.ring." + s;
+  std::string p = "/heddle.ring." + s;
   if (p.size() > 120) p.resize(120);
   int fd = ::shm_open(p.c_str(), O_RDWR, 0);
   if (fd >= 0) {
@@ -444,7 +444,7 @@ void AudioRing::remove(const std::string& name) {
 #ifndef _WIN32
   // POSIX: unlink removes the name; any process that already mapped it keeps
   // a valid view until it unmaps.
-  std::string p = "/weft.ring." + s;
+  std::string p = "/heddle.ring." + s;
   if (p.size() > 120) p.resize(120);
   ::shm_unlink(p.c_str());
 #else
@@ -524,4 +524,4 @@ size_t AudioRing::dataAvailable() const {
   return static_cast<size_t>(head - tail);
 }
 
-}  // namespace weft
+}  // namespace heddle

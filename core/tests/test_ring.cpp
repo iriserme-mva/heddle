@@ -4,7 +4,7 @@
 // itself as a child producer/consumer over the same named ring).
 #include "doctest.h"
 
-#include "weft/ring.hpp"
+#include "heddle/ring.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -32,7 +32,7 @@
 #include <unistd.h>
 #endif
 
-using namespace weft;
+using namespace heddle;
 using namespace std::chrono_literals;
 
 namespace {
@@ -41,7 +41,7 @@ std::string testName(const char* base) {
   // Short, collision-proof per-name suffix.
   //
   // POSIX shared-memory names are capped at 31 chars (POSIX_NAME_MAX) and every
-  // ring is prefixed with "/weft.ring." (11 chars), so the sanitized name must
+  // ring is prefixed with "/heddle.ring." (11 chars), so the sanitized name must
   // stay <= 20 chars. The old PID + full nanosecond-timestamp scheme produced
   // names longer than that and broke shm_open() on macOS with ENAMETOOLONG
   // (errno 63); Linux tmpfs tolerates 255, which is why only macOS showed it.
@@ -51,7 +51,7 @@ std::string testName(const char* base) {
   //   salt  - 4 hex chars from FNV-1a(pid, process start time); constant for the
   //           process, and unique across processes and across PID reuse
   //   seq   - per-process monotonically increasing counter, unique within a run
-  // Worst case = "/weft.ring." (11) + "partial_" (8) + "x_" (2) + salt (4) + "_" (1)
+  // Worst case = "/heddle.ring." (11) + "partial_" (8) + "x_" (2) + salt (4) + "_" (1)
   // + seq (2) = 28 chars, under macOS's 31-char shm name limit (the old 34-char
   // PID+ns names triggered ENAMETOOLONG).
   static const std::string salt = [] {
