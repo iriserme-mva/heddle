@@ -1,7 +1,8 @@
 // weft-host — the standalone live JUCE VST3 chain host.
 //
-//   weft-host <chain.json> [--audio null|system] [--device NAME]
-//             [--osc-port N] [--duration SECONDS] [--gui] [--version]
+//   weft-host <chain.json> [--audio null|system|ring] [--device NAME]
+//             [--ring PREFIX] [--osc-port N] [--duration SECONDS]
+//             [--gui] [--version]
 //
 // Loads the chain described by the config JSON, instantiates the plugins
 // via JuceBackend, and runs them live:
@@ -11,6 +12,14 @@
 //   * --audio null: no audio device is touched; a software clock thread
 //     drives the chain at the config's sample rate / block size. Used for
 //     headless (CI) testing and OSC-only use.
+//   * --audio ring: no audio device is touched; instead the host owns two
+//     named shared-memory audio rings (PREFIX.in / PREFIX.out, default
+//     weft.bridge.in / weft.bridge.out) and a pump thread. The WeftBridge
+//     VST3 (or the bridge round-trip test) writes interleaved float32 frames
+//     into PREFIX.in and reads the processed audio back from PREFIX.out. The
+//     pump paces the chain at the config's sample rate / block size, exactly
+//     one ring block at a time. This is the audio path the DAW-facing bridge
+//     VST3 uses.
 //
 // OSC control protocol (see docs/OSC.md; the same framing core/src/osc.cpp
 // implements for the offline tooling — every message is carried with a
@@ -88,6 +97,7 @@
 #include "weft/config.hpp"
 #include "weft/osc.hpp"
 #include "weft/osc_io.hpp"
+#include "weft/ring.hpp"
 
 // Stamped by CMake (configure_file -> weft_version.hpp on this target's
 // include path), same as weft_smoke / weft-render.
@@ -161,6 +171,54 @@ private:
     std::atomic<bool> running_{true};
 };
 
+// Audio-ring pump for --audio ring: paces the ring form of
+// audioDeviceIOCallbackWithContext (numSamples == 0, null buffers) at the
+// config's rate/block, but only when the producer actually has a full block
+// of data in the input ring. The callback itself decides the block size from
+// its config when numSamples <= 0 (identical to the null-clock tick); the
+// ring-mode run() override in WeftHost feeds the real audio in/out through
+// the rings. When the input ring is empty the callback is NOT invoked (no
+// chain processing, no output written), so the consumer side (the DAW-side
+// bridge or the round-trip test) simply sees no new output until input
+// arrives.
+class AudioRingPumpThread : public juce::Thread {
+public:
+    AudioRingPumpThread() : juce::Thread("weft-ring-pump") {}
+
+    // Set before startThread(); the rings are owned by the host and outlive
+    // the thread (the host stops the thread in stopAll() before closing the
+    // rings).
+    void setPace(juce::AudioIODeviceCallback* cb, weft::AudioRing* inRing,
+                 weft::AudioRing* outRing, int sampleRate, int blockSize) {
+        cb_ = cb;
+        inRing_ = inRing;
+        outRing_ = outRing;
+        frames_ = blockSize > 0 ? blockSize : 512;
+        (void)sampleRate;
+        (void)outRing;
+        pollMs_ = 1;
+    }
+
+    void stopPump() { running_ = false; }
+
+private:
+    void run() override {
+        while (running_) {
+            if (cb_ != nullptr && inRing_ != nullptr &&
+                inRing_->dataAvailable() >= frames_)
+                cb_->audioDeviceIOCallbackWithContext(nullptr, 0, nullptr, 0, 0, {});
+            std::this_thread::sleep_for(std::chrono::milliseconds(pollMs_));
+        }
+    }
+
+    juce::AudioIODeviceCallback* cb_ = nullptr;
+    weft::AudioRing* inRing_ = nullptr;
+    weft::AudioRing* outRing_ = nullptr;
+    int frames_ = 512;
+    int pollMs_ = 1;
+    std::atomic<bool> running_{true};
+};
+
 }  // namespace
 
 class WeftHostWindow;  // --gui window; defined after WeftHost (its content
@@ -221,6 +279,35 @@ public:
                 logErr(err);
                 return 1;
             }
+        } else if (args_.audioMode == "ring") {
+            // Create the two shared-memory rings and start the pump thread.
+            // The bridge (or the round-trip test) attaches via AudioRing::open.
+            const int nch = 2;  // fixed stereo bridge bus
+            const int cap = (cfg_.blockSize > 0 ? cfg_.blockSize : 512) * 16;
+            ringInName_ = args_.ringPrefix + ".in";
+            ringOutName_ = args_.ringPrefix + ".out";
+            if (weft::AudioRing::exists(ringInName_))
+                weft::AudioRing::remove(ringInName_);
+            if (weft::AudioRing::exists(ringOutName_))
+                weft::AudioRing::remove(ringOutName_);
+            ringIn_ = weft::AudioRing::create(ringInName_, cap, nch, cfg_.sampleRate, &err);
+            if (!ringIn_.valid()) {
+                logErr("ring create " + ringInName_ + ": " + err);
+                return 1;
+            }
+            ringOut_ = weft::AudioRing::create(ringOutName_, cap, nch, cfg_.sampleRate, &err);
+            if (!ringOut_.valid()) {
+                logErr("ring create " + ringOutName_ + ": " + err);
+                ringIn_.close();
+                return 1;
+            }
+            logInfo("audio=ring (shared memory: " + ringInName_ + " / " + ringOutName_ +
+                    ", " + std::to_string(nch) + " ch, " + std::to_string(cfg_.sampleRate) +
+                    " Hz, " + std::to_string(cfg_.blockSize) + "-sample blocks, capacity " +
+                    std::to_string(cap) + " frames); no audio device opened");
+            ringPump_ = std::make_unique<AudioRingPumpThread>();
+            ringPump_->setPace(this, &ringIn_, &ringOut_, cfg_.sampleRate, cfg_.blockSize);
+            ringPump_->startThread();
         } else {  // null
             logInfo("audio=null (software clock @ " + std::to_string(cfg_.sampleRate) +
                     " Hz, " + std::to_string(cfg_.blockSize) +
@@ -268,6 +355,10 @@ public:
                                           const juce::AudioIODeviceCallbackContext& ctx) override {
         (void)ctx;  // only carries hostTimeNs; rate/block come from the device
         const bool nullTick = (numSamples <= 0);
+        // --audio ring: the pump thread drives the same null-form tick, but
+        // the real audio flows through the shared-memory rings (ringIn_ /
+        // ringOut_ are valid only in ring mode).
+        const bool ringTick = nullTick && ringIn_.valid() && ringOut_.valid();
         const int frames =
             nullTick ? (cfg_.blockSize > 0 ? cfg_.blockSize : 512) : numSamples;
         const double rate =
@@ -291,7 +382,40 @@ public:
             backend_.setProcessSpec(rate, frames);
         }
 
-        runBlockLocked(inData, numIns, frames);
+        // In ring mode the real input comes from ringIn_ (the pump thread is
+        // its sole consumer — SPSC). De-interleave a full block into a planar
+        // scratch and feed it to runBlockLocked exactly like device input;
+        // runBlockLocked() clears workIn_ itself, so the audio must arrive via
+        // inData, not by pre-filling workIn_.
+        const float* const* runIn = inData;
+        int runIns = numIns;
+        if (ringTick) {
+            const size_t nch = (size_t)ringIn_.numChannels();
+            if (nch > 0) {
+                // Read interleaved from the ring, de-interleave into planar
+                // scratch, and hand the planar pointers to runBlockLocked.
+                const size_t n = (size_t)frames;
+                ringInInter_.resize(nch * n);
+                const size_t got = ringIn_.read(ringInInter_.data(), n);
+                if (got < n)
+                    std::fill(ringInInter_.begin() + got * nch, ringInInter_.end(), 0.f);
+                ringInBuf_.resize(nch * n);
+                ringInPtrs_.resize(nch);
+                for (size_t f = 0; f < got; ++f) {
+                    for (size_t c = 0; c < nch; ++c)
+                        ringInBuf_[c * n + f] = ringInInter_[f * nch + c];
+                }
+                for (size_t f = got; f < n; ++f)
+                    for (size_t c = 0; c < nch; ++c)
+                        ringInBuf_[c * n + f] = 0.f;
+                for (size_t c = 0; c < nch; ++c)
+                    ringInPtrs_[c] = ringInBuf_.data() + c * n;
+                runIn = ringInPtrs_.data();
+                runIns = (int)nch;
+            }
+        }
+
+        runBlockLocked(runIn, runIns, frames);
         chainFrame_ += frames;
 
         if (outData != nullptr) {
@@ -306,6 +430,21 @@ public:
                     std::memcpy(outData[c], src, static_cast<size_t>(frames) * sizeof(float));
                 else
                     std::fill(outData[c], outData[c] + frames, 0.f);
+            }
+        }
+
+        if (ringTick) {
+            // Interleave workOut_ into ringOut_ (the pump thread is its sole
+            // producer — SPSC). Channels beyond the ring width are dropped.
+            const size_t nch = (size_t)ringOut_.numChannels();
+            if (nch > 0) {
+                ringOutBuf_.resize(nch * (size_t)frames);
+                for (int c = 0; c < (int)nch; ++c)
+                    for (int f = 0; f < frames; ++f)
+                        ringOutBuf_[(size_t)f * nch + c] =
+                            (c < workOut_.getNumChannels())
+                                ? workOut_.getReadPointer(c)[f] : 0.f;
+                ringOut_.write(ringOutBuf_.data(), (size_t)frames);
             }
         }
     }
@@ -360,6 +499,7 @@ private:
         std::string configPath;
         std::string audioMode = "system";
         std::string deviceName;
+        std::string ringPrefix = "weft.bridge";  // --ring: PREFIX.in / PREFIX.out
         int oscPort = 0;            // 0 = not given on the CLI
         bool printVersion = false;
         double durationSec = 0.0;
@@ -386,6 +526,10 @@ private:
                 const char* v = need("--device");
                 if (v == nullptr) return false;
                 args_.deviceName = v;
+            } else if (a == "--ring") {
+                const char* v = need("--ring");
+                if (v == nullptr) return false;
+                args_.ringPrefix = v;
             } else if (a == "--osc-port") {
                 const char* v = need("--osc-port");
                 if (v == nullptr) return false;
@@ -420,8 +564,10 @@ private:
             usage(argv[0]);
             return false;
         }
-        if (args_.audioMode != "system" && args_.audioMode != "null") {
-            logErr("unknown --audio '" + args_.audioMode + "' (want 'system' or 'null')");
+        if (args_.audioMode != "system" && args_.audioMode != "null" &&
+            args_.audioMode != "ring") {
+            logErr("unknown --audio '" + args_.audioMode +
+                   "' (want 'system', 'null', or 'ring')");
             return false;
         }
         return true;
@@ -429,10 +575,12 @@ private:
 
     static void usage(const char* prog) {
         std::fprintf(stderr,
-            "usage: %s <chain.json> [--audio null|system] [--device NAME]\n"
-            "       [--osc-port N] [--duration SECONDS] [--gui] [--version]\n"
+            "usage: %s <chain.json> [--audio null|system|ring] [--device NAME]\n"
+            "       [--ring PREFIX] [--osc-port N] [--duration SECONDS] [--gui] [--version]\n"
             "  Live VST3 chain host (JUCE). OSC control over UDP; the config's\n"
             "  osc.port/bind_host are the defaults, --osc-port overrides the port.\n"
+            "  --audio ring serves the WeftBridge VST3 over the shared-memory rings\n"
+            "  PREFIX.in / PREFIX.out (default weft.bridge.in / weft.bridge.out).\n"
             "  --gui opens a window with per-slot param sliders (default off,\n"
             "  headless).\n",
             prog);
@@ -533,8 +681,15 @@ private:
             }
             cur = next;
         }
-        if (cur != nullptr)
-            workOut_.copyFrom(0, 0, *cur, 0, 0, frames);
+        if (cur != nullptr) {
+            // Per-channel copy: JUCE's 6-arg copyFrom(dstCh, dstStart, src,
+            // srcCh, srcStart, n) is SINGLE-channel — a "copy whole buffer"
+            // overload does not exist. Channel 0 alone would silently drop
+            // every other channel (workOut_ ch1+ stays cleared).
+            const int n = std::min(workOut_.getNumChannels(), cur->getNumChannels());
+            for (int c = 0; c < n; ++c)
+                workOut_.copyFrom(c, 0, *cur, c, 0, frames);
+        }
     }
 
     // Map slot index -> param names that are curves (automation only touches
@@ -788,6 +943,19 @@ private:
     double devRate_ = 0.0;
     int devBlock_ = 0;
     int64_t chainFrame_ = 0;
+
+    // --audio ring: the two shared-memory rings (host owns both; the WeftBridge
+    // VST3 or the round-trip test attaches to them). ringIn_ = DAW -> host,
+    // ringOut_ = host -> DAW. Only the pump thread touches the rings, so the
+    // per-block scratch below needs no locking.
+    weft::AudioRing ringIn_, ringOut_;
+    std::unique_ptr<AudioRingPumpThread> ringPump_;
+    // ringInInter_ = interleaved samples read from ringIn_; de-interleaved into
+    // the planar ringInBuf_ (ringInPtrs_[c] = channel-c pointer) for the chain.
+    // ringOutBuf_ = interleaved samples written to ringOut_.
+    std::vector<float> ringInInter_, ringInBuf_, ringOutBuf_;
+    std::vector<const float*> ringInPtrs_;
+    std::string ringInName_, ringOutName_;
 
     // slot index -> curved param names (automation only touches these).
     std::map<int, std::vector<std::string>> curveTables_;
@@ -1087,10 +1255,21 @@ void WeftHost::stopAll() {
         clock_->stopThread(3000);
         clock_.reset();
     }
+    if (ringPump_ != nullptr) {
+        ringPump_->stopPump();
+        ringPump_->stopThread(3000);
+        ringPump_.reset();
+    }
     // Join the device audio thread so no callback can touch the backend
     // while it is destroyed.
     if (adm_.getCurrentAudioDevice() != nullptr)
         adm_.removeAudioCallback(this);
+    // The pump and device callback no longer run: the rings can be closed.
+    // (On Windows the named mappings can't be deleted while live; on
+    // POSIX the host's close() unmaps but the mapping object persists for
+    // attached bridges until they detach too.)
+    ringIn_.close();
+    ringOut_.close();
     osc_.close();
     running_ = false;
     logInfo("stopped");

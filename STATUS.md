@@ -28,9 +28,48 @@ current after every session** — last section first.
 | packaging (item 8f) | ✅ root LICENSE (MIT), `--version` + CMake version stamp 0.1.0, README render docs + JUCE AGPLv3/commercial license correction |
 | docs (README/CONFIG/OSC/ARCHITECTURE) | ✅ re-synced to code 2026-10-11 (reply format, curve params, layout, target names) |
 | logo + name (Weft) | 🔨 assets present (assets/logo/) — fix requested 2026-10-14 (Miha); **2026-10-16: VLM (qwen3-vl) inspection done — mark fails at favicon scale (muddy gradient, inner dots vanish), banner tagline "audio chain host" half-hidden behind the W, avatar strokes melt <120px; common fix = thicker strokes + solid high-contrast color + fewer elements + vector master. ⚠️ NAME COLLISION surfaced via web: Oiko Audio "Weft" is an active open-source VST3/CLAP spectral filter (same name + same VST3 format) and 870 GitHub repos named "weft". Naming decision now blocks logo rework (regen first if name changes). Awaiting Miha: keep name vs rename |
+| host: t5 bridge (`weft-host --audio ring` + WeftBridge VST3 + `weft-bridge-test`) | ✅ written + local green: shared-memory SPSC ring pair (`weft.bridge.in/.out`, weft_core `AudioRing`) + OSC control on the headless host; `weft-bridge-test` (weft_core only, no JUCE) spawns the host, asserts Gain-0.5 round-trip (mean 0.25, both channels) + OSC `/chain/query` → `/reply/chain` + `/chain/quit` clean exit. Debugged: JUCE 6-arg `copyFrom` is single-channel (dropped stereo ch1) + `fail()` no-exit cascade masked the OSC check. CI job added (3-OS) — **CI pending** |
 
 ## Log
 
+- **2026-10-16 (2)** — **t5 bridge: headless shared-memory ring IPC + WeftBridge VST3 + end-to-end test; local green, CI pending.**
+  The live-host↔plugin IPC bridge lands: `weft-host --audio ring` runs the
+  chain headless (no audio device) with audio crossing process boundaries
+  over a shared-memory SPSC ring pair (`weft.bridge.in` / `weft.bridge.out`,
+  `weft::AudioRing` from weft_core, 16384-frame capacity, 1024-sample blocks,
+  48 kHz stereo) and OSC/UDP as the control surface (port auto-allocated,
+  printed on ready). `host/weft_bridge/` adds the WeftBridge VST3 — a thin
+  plugin whose DSP is dry passthrough; it exists so a DAW-side plugin and
+  the host can share the ring (status editor shows ring state). `weft-bridge-test`
+  (`host/src/bridge_test.cpp`, links **only weft_core** — no JUCE, so it runs
+  on a bare headless runner) is the end-to-end check: spawns
+  `weft-host --audio ring --osc-port <auto>`, waits for the ready line,
+  writes a 0.5 constant (both channels, 8192 frames = 8 full blocks) into
+  `weft.bridge.in`, reads `weft.bridge.out`, and asserts the round-trip mean
+  is 0.25 with the smoke plugin at Gain=0.5, "PWM pct"=1.0 (gate wide open:
+  0.5 × 0.5 × 1.0). Then drives OSC: `/chain/query` → `/reply/chain` (must
+  list the "smoke" slot as loaded) and `/chain/quit` → `/reply/status
+  "quitting"` + host exit 0.
+  **Two real bugs found via instrumentation, both fixed:**
+  (1) *Stereo ch1 silently zeroed* — `runBlockLocked` ended with
+  `workOut_.copyFrom(0, 0, *cur, 0, 0, frames)`. JUCE's 6-arg `copyFrom`
+  (`destChannel, destStart, source, sourceChannel, sourceStart, numSamples`)
+  is **single-channel** — there is no buffer-to-buffer multi-channel
+  overload — so only channel 0 was copied and `workOut_` ch1 stayed cleared.
+  Symptom: per-channel means 0.25/0.0, histogram `0.25=8192 0.0=8192`
+  (exactly half the samples at the right value, the rest zero). Fixed with a
+  per-channel loop. (2) *`fail()` no-exit cascade* — the test's `fail()`
+  printed + killed the host but did not exit, so a gain failure cascaded
+  into the OSC section against a dead host and misreported an OSC failure
+  (the host OSC path itself was verified working by an independent Python
+  probe with the 4-byte length prefix). `fail()` now `std::exit(1)`s after
+  cleanup. Local (MSVC, VS 2022): build clean, `bridge-test: PASS
+  (ring round-trip ratio=0.5000, OSC query+quit OK)`, exit 0. CI:
+  `ci.yml` now also builds `weft-host` + `weft-bridge-test` +
+  `weft_bridge_plugin_VST3` (compile check), and the host job gained a
+  **Bridge round-trip** step that runs `weft-bridge-test` against the smoke
+  VST3 on all 3 OSes; the plugin-locate step now targets the smoke bundle by
+  path prefix (two VST3s are built).
 - **2026-10-16 (1)** — **Logo VLM inspection + name-collision finding (no code changed).**
   Per Miha's note ("use a vision model for logo inspection"), ran all three
   assets in `assets/logo/` through the live VLM

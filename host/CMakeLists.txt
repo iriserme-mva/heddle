@@ -17,6 +17,7 @@ FetchContent_MakeAvailable(juce)
 configure_file(src/weft_version.hpp.in weft_version.hpp @ONLY)
 
 add_subdirectory(test_plugin)
+add_subdirectory(weft_bridge)
 
 # ---- smoke CLI -------------------------------------------------------------
 add_executable(weft_smoke
@@ -123,3 +124,23 @@ target_include_directories(weft-host PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 if(WIN32)
     target_link_libraries(weft-host PRIVATE ws2_32 winmm)
 endif()
+
+# ---- weft-bridge-test (t5 bridge round-trip, headless) ----------------------
+# weft-bridge-test <weft-host> <smoke-vst3>
+#
+# Drives the ring IPC end-to-end without loading the WeftBridge VST3 (the
+# plugin is a CI compile/instantiate check; this is the audio path). Spawns
+# weft-host headless with --audio ring, writes a 0.5 constant into
+# weft.bridge.in, reads weft.bridge.out, and asserts the Gain-0.5 round-trip
+# (mean ~= 0.25) plus an OSC /chain/query + /chain/quit round-trip.
+#
+# Links ONLY weft_core (ring + OSC). No JUCE: no GUI, no audio device, no
+# Xvfb -- it runs on a bare headless runner. On Windows the ws2_32 import
+# needed by osc_io.cpp arrives transitively (weft_core links it PUBLIC).
+add_executable(weft-bridge-test
+    src/bridge_test.cpp
+)
+target_link_libraries(weft-bridge-test
+    PRIVATE
+        weft_core
+)

@@ -68,11 +68,11 @@ jobs:
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: cmake --build build --config Release --target weft_smoke weft_smoke_plugin_VST3 weft-render --verbose
+        run: cmake --build build --config Release --target weft_smoke weft_smoke_plugin_VST3 weft-render weft-host weft-bridge-test weft_bridge_plugin_VST3 --verbose
 
       - name: Build (Linux / macOS)
         if: runner.os != 'Windows'
-        run: cmake --build build --target weft_smoke weft_smoke_plugin_VST3 weft-render -v
+        run: cmake --build build --target weft_smoke weft_smoke_plugin_VST3 weft-render weft-host weft-bridge-test weft_bridge_plugin_VST3 -v
 
       - name: Locate built VST3 plugin
         id: loc
@@ -82,7 +82,11 @@ jobs:
           #   win (VS gen): build/PlugIns/*_artefacts/Release/VST3/<Product>.vst3 (dir)
           #   lin:          build/PlugIns/*_artefacts/VST3/<Product>.vst3 (dir)
           #   mac:          build/PlugIns/*_artefacts/VST3/<Product>.vst3/Contents/Resources/moduleinfo.json
-          find build \( -name 'moduleinfo.json' -o -name 'WeftSmokePlugin.vst3' \) > plugin_hits.txt
+          # Two VST3s are now built (smoke + WeftBridge). This step targets
+          # the SMOKE plugin by path prefix — it is the one the smoke/render/
+          # bridge steps chain into. find prints the bundle dir before
+          # descending into it, so head -n1 is the bundle on every platform.
+          find build -path '*WeftSmokePlugin.vst3*' > plugin_hits.txt
           if [ ! -s plugin_hits.txt ]; then
             echo "::error::no VST3 plugin artefact found under build/"
             exit 1
@@ -270,3 +274,32 @@ jobs:
           assert abs(gain - 0.6875) < 0.01, gain   # (0.5+0.625+0.75+0.875)/4
           print("RENDER CURVE OK")
           PYEOF
+
+      - name: Bridge round-trip (audio + OSC over shared-memory rings, headless)
+        shell: bash
+        run: |
+          # The t5 bridge end-to-end, WITHOUT loading the WeftBridge VST3
+          # (that is a CI compile check; the real audio path is the ring
+          # pair). weft-bridge-test spawns weft-host headless with
+          #   --audio ring --osc-port <auto>
+          # chains the SMOKE plugin at Gain=0.5, writes a 0.5 constant into
+          # weft.bridge.in, reads weft.bridge.out, and asserts the round-trip
+          # mean is 0.25 (= 0.5 * Gain 0.5, "PWM pct"=1.0 gate wide open).
+          # It then drives OSC: /chain/query -> /reply/chain (must list the
+          # "smoke" slot), and /chain/quit -> /reply/status "quitting" with a
+          # clean exit 0.
+          #
+          # Headless by construction: the test binary links only weft_core
+          # (no JUCE), and weft-host runs with no --gui. JUCE's X11 init
+          # fails gracefully on a display-less Linux runner (no crash), so no
+          # Xvfb / X server is required. No JACK dependency (JUCE loads it
+          # at runtime only, and --audio ring never touches a device).
+          # Binary layout (same as the other CLIs):
+          #   win (VS gen): build/Release/weft-bridge-test.exe
+          #   lin/mac:      build/weft-bridge-test
+          bridge=$(find build -name 'weft-bridge-test' -o -name 'weft-bridge-test.exe' | head -n1)
+          [ -n "$bridge" ] && [ -x "$bridge" ] || { echo "::error::weft-bridge-test binary not found"; exit 1; }
+          host=$(find build -name 'weft-host' -o -name 'weft-host.exe' | head -n1)
+          [ -n "$host" ] && [ -x "$host" ] || { echo "::error::weft-host binary not found"; exit 1; }
+          "$bridge" "$host" "${{ steps.loc.outputs.path }}"
+          echo "BRIDGE OK"
