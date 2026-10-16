@@ -9,6 +9,9 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # ---- core library -----------------------------------------------------------
+# POSITION_INDEPENDENT_CODE: the static lib is also linked into shared
+# objects on Linux (VST3 .so in weft_bridge); without -fPIC the .so link
+# fails with "relocation R_X86_64_PC32 ... recompile with -fPIC".
 add_library(weft_core STATIC
     core/src/osc.cpp
     core/src/config.cpp
@@ -17,6 +20,7 @@ add_library(weft_core STATIC
     core/src/osc_io.cpp
     core/src/ring.cpp
 )
+set_target_properties(weft_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(weft_core PUBLIC
   core/include
   third_party
