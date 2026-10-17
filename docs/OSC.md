@@ -19,21 +19,26 @@ sends replies to the client's source address.
 | `/chain/reset` | (none) | reset all slots |
 | `/chain/apply` | `s` path | (re)load a config file; hot-apply (no reload of unchanged plugins) |
 | `/chain/config` | `b` json blob | (re)load config from a raw JSON blob |
+| `/chain/status` | (none) | host status line → `/reply/status` |
+| `/chain/quit` | (none) | reply `/reply/status` `"quitting"`, host exits 0 |
 
 **Slot token** `<slot>` is either the slot `id` from the config (e.g. `comp`)
 or the numeric index as a string (e.g. `0`). Resolution is done by `Chain`.
 
 **Disambiguation of set-by-name vs set-by-id:** with one float argument the
 message sets by *param name*; with `int, float` it sets by *param id*.
+A bare `/chain/<slot>/<param>` with *no* arguments **queries** all params of
+the slot (one string reply per param).
 
 ### Replies (host → client)
 
 | Address | Args | Meaning |
 |---|---|---|
 | `/reply/chain` | `s` | one line per slot: `index<TAB>id<TAB>path<TAB>enabled` |
-| `/reply/<slot>` | `s` per param | all params of the slot, one message each addressed to `/reply/<slot>/<param>`: line = `id<TAB>title<TAB>value<TAB>min<TAB>max<TAB>steps<TAB>kind`, plus one extra tab-separated column per `listItems` label (enum/chord params) |
-| `/reply/<slot>/<param>` | `f` | ack of a set: the param's current normalized value |
-| `/status` | `s` | host status string (e.g. `loaded: 3 slots`) |
+| `/reply/<slotId>/<paramTitle>` | `s` per param | query-all of the slot: one message per param, line = `id<TAB>title<TAB>value<TAB>min<TAB>max<TAB>steps<TAB>kind`, plus one extra tab-separated column per `listItems` label (enum/chord params) |
+| `/reply/<slotId>/<paramTitle>` | `f` | ack of a set: the param's current normalized value |
+| `/reply/<slot>` | `s` | error reply for unknown slot / unknown param (e.g. `error: no such slot: x`) |
+| `/reply/status` | `s` | host status line (e.g. `loaded: 3 slots`); also the `quitting` reply to `/chain/quit` |
 
 ### Pushes (host → client, unsolicited)
 
@@ -69,6 +74,7 @@ message sets by *param name*; with `int, float` it sets by *param id*.
 - `osc_addr::classify()` maps a raw `OscMsg` to a `ParamAction`; unknown
   prefixes classify as `Unknown` (ignored, no error push).
 - The decoder rejects malformed input (unterminated strings, missing tag
-  separator) and returns `false` — no partial state is applied.
+  separator, arguments that would run past the declared frame length) and
+  returns `false` — no partial state is applied.
 - The *core* library owns the message model + addressing; the *app* owns the
   UDP sockets (split by design: wrapper describes params, app transports).

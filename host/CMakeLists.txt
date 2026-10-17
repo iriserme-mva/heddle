@@ -144,3 +144,25 @@ target_link_libraries(heddle-bridge-test
     PRIVATE
         heddle_core
 )
+
+# ---- heddle-osc-perf-host (OSC perf vs a REAL live host) -------------------
+# heddle-osc-perf-host <heddle-host> <smoke-vst3> [--rates 50,200,500,2000,5000]
+#
+# The host-level half of the OSC performance story (see docs/PERFORMANCE.md).
+# It spawns a REAL heddle-host (--audio ring, a live audio-thread pump + the
+# smoke VST3) and, for a ramp of sustained OSC set-rates, measures:
+#   * set->ack RTT (the realistic control latency through the message thread +
+#     the live VST3 setParam, as a function of set rate);
+#   * UDP set loss (max reliable rate, bounded by the 5 ms OSC drain + the
+#     socket receive buffer);
+#   * audio-path throughput deficit + input backlog (lock-contention cost: the
+#     audio pump try-locks chainLock_, the OSC thread blocks on it).
+# Like heddle-bridge-test it links ONLY heddle_core (no JUCE), so it runs on a
+# bare headless runner; the child heddle-host does the JUCE/audio work.
+add_executable(heddle-osc-perf-host
+    src/osc_perf_host.cpp
+)
+target_link_libraries(heddle-osc-perf-host
+    PRIVATE
+        heddle_core
+)

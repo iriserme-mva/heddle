@@ -17,7 +17,7 @@ whole setup in a small **JSON** config, and run it offline from a CLI.
 
 | Layer | What it is | State |
 |---|---|---|
-| `core/` | Platform-agnostic C++17 library: param model, chain, JSON config, OSC wire + addressing, UDP transport, time-series params (static or curve) | **building & tested** (39/39 test cases, 253 assertions) |
+| `core/` | Platform-agnostic C++17 library: param model, chain, JSON config, OSC wire + addressing, UDP transport, time-series params (static or curve) | **building & tested** (60/60 test cases, 1701 assertions) |
 | `host/` | JUCE-based VST3 wrapper backend + `heddle_smoke` introspection CLI + `heddle-render` offline audio→audio CLI | **building & CI-tested** |
 
 Progress is tracked in [STATUS.md](STATUS.md).
@@ -135,9 +135,10 @@ heddle/
 │   │   ├── osc.hpp        # OSC 1.0 wire codec + /chain addressing
 │   │   └── osc_io.hpp     # UDP OSC transport (source tracking)
 │   ├── src/               # implementations
-│   └── tests/             # targeted doctest suites
+│   ├── tests/             # targeted doctest suites
+│   └── tools/             # heddle_ring_latency, heddle_osc_perf benchmarks
 ├── host/                  # JUCE backend + heddle_smoke + heddle-render (opt-in)
-├── docs/                  # CONFIG.md, OSC.md, ARCHITECTURE.md
+├── docs/                  # CONFIG.md, OSC.md, ARCHITECTURE.md, ALIGNMENT.md, PERFORMANCE.md
 ├── examples/chain.json    # example rig config
 ├── assets/logo/           # banner, avatar, mark
 └── third_party/           # nlohmann/json.hpp, doctest.h (vendored)
@@ -148,6 +149,8 @@ heddle/
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — layering, backend contract, data flow
 - [docs/CONFIG.md](docs/CONFIG.md) — JSON schema + merge semantics
 - [docs/OSC.md](docs/OSC.md) — full OSC protocol reference
+- [docs/ALIGNMENT.md](docs/ALIGNMENT.md) — solution ↔ use-case fit analysis
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md) — OSC/ring performance results + harness
 
 ## Prior art
 

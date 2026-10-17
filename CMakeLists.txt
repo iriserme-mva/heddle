@@ -52,6 +52,14 @@ add_test(NAME heddle_core_tests COMMAND heddle_core_tests)
 add_executable(heddle_ring_latency core/tools/ring_latency.cpp)
 target_link_libraries(heddle_ring_latency PRIVATE heddle_core)
 
+# ---- OSC performance benchmark (core layer, no JUCE) ------------------------
+# osc_perf: OSC codec throughput, per-op cost of the classify->resolveSlot->
+# setParam path (continuous param adjust), UDP loopback one-way + set->ack
+# RTT, and max sustainable set rate. Runs on every CI runner in the `core`
+# job (no audio device / X server needed). See docs/PERFORMANCE.md.
+add_executable(heddle_osc_perf core/tools/osc_perf.cpp)
+target_link_libraries(heddle_osc_perf PRIVATE heddle_core)
+
 # ---- JUCE host layer (opt-in) ----------------------------------------------
 option(HEDDLE_BUILD_HOST "Build the JUCE host layer (VST3 plugin + smoke CLI)" OFF)
 if(HEDDLE_BUILD_HOST)

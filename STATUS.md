@@ -7,11 +7,11 @@ current after every session** — last section first.
 
 - ✅ done · 🔨 in progress · ⏸ blocked (state why) · 📅 planned
 
-## Current state (2026-10-16)
+## Current state (2026-10-17)
 
 | Layer | Status |
 |---|---|
-| core: param/chain/config/osc/osc_io | ✅ builds, 39/39 test cases, 253/253 assertions |
+| core: param/chain/config/osc/osc_io | ✅ builds, 60/60 test cases, 1702/1702 assertions (post underflow fix) |
 | core: param time-series (static\|curve) parse/dump/merge/eval | ✅ **CI GREEN** (run 38220293171, all 3 OSes) |
 | host: `heddle-render` per-slot curve automation | ✅ **CI GREEN** (run 38220293171: curve mean-gain 0.6875 assert on all 3 OSes) |
 | osc: source-address tracking + `sendTo()` reply routing | ✅ **CI GREEN** (run 38220293171, udp loopback test) |
@@ -29,8 +29,65 @@ current after every session** — last section first.
 | docs (README/CONFIG/OSC/ARCHITECTURE) | ✅ re-synced to code 2026-10-11 (reply format, curve params, layout, target names) |
 | logo + name (Heddle) | ✅ **2026-10-16: renamed Weft→Heddle** (Miha's call — resolves the Oiko Audio "Weft" VST3 collision) + logo v3 done: VLM-verified mark / mark_light / mark_transparent / banner / avatar_400 in assets/logo/ (v1 palette cyan 0,229,255 → violet 124,92,255, rounded heddle frame, 5 slots center-tallest, control segments at slot bases); delivered to chat via direct Bot API after 3/3 gateway `MEDIA:` sends were lost (sending-media skill, mode 3). Source rename complete — zero `weft` outside dated history; repo renamed weft→heddle + v0.1.7 released 2026-10-16 (code-only, 0 assets) |
 | host: t5 bridge (`heddle-host --audio ring` + HeddleBridge VST3 + `heddle-bridge-test`) | ✅ written + local green (re-verified post-rename 2026-10-16 after clean reconfigure — stale CMakeCache pitfall, see log 2026-10-16 (3)): shared-memory SPSC ring pair (`heddle.bridge.in/.out`, heddle_core `AudioRing`) + OSC control on the headless host; `heddle-bridge-test` (heddle_core only, no JUCE) spawns the host, asserts Gain-0.5 round-trip (mean 0.25, both channels) + OSC `/chain/query` → `/reply/chain` + `/chain/quit` clean exit. Debugged: JUCE 6-arg `copyFrom` is single-channel (dropped stereo ch1) + `fail()` no-exit cascade masked the OSC check. CI job added (3-OS) — **CI GREEN** (run 38930583651, all 6 jobs, `43a8303`) |
+| core: OSC robustness — bounded frame parse (underflow fix) + bounded numeric-slot parse | ✅ written + 60/60 tests local (log 2026-10-17 (1)): `osc.cpp` frame read guarded (size-prefix underflow could read past buffer end); `chain.cpp` numeric-slot param parse rejects malformed; 2 new doctest cases |
+| perf: `heddle_osc_perf` (core OSC benchmark, no JUCE) + `heddle-osc-perf-host` (OSC vs real live host) | ✅ written + measured (log 2026-10-17 (1)): core set path 0.22 µs/4.7 Msets/s, UDP loopback RTT ~16 µs; host drain floor ~23.6 ms, ~1 ksets/s max reliable, audio deficit <2 % below ceiling; `docs/PERFORMANCE.md` written; both wired into CI (continue-on-error, reports archived as artifacts) |
 
 ## Log
+
+- **2026-10-17 (1)** — **OSC robustness (underflow fix) + two perf harnesses + `docs/PERFORMANCE.md`; local green, CI pending.**
+  Follow-up to the 2026-10-16 rename/release, addressing the two open items
+  from the use-case review (live-rig control latency + continuous
+  param-adjustment audio cost). Three pieces:
+  (a) *OSC robustness — bounded frame parse.* `core/src/osc.cpp`: the
+  frame read could be handed a size prefix that underflowed against the
+  remaining buffer length, allowing a read past the end of the packet
+  buffer. Added a guard so the frame length is clamped to the bytes
+  actually available before any copy. `core/src/chain.cpp`: the
+  numeric-slot param parse now rejects a malformed value instead of
+  silently misparsing. Two new doctest cases cover both
+  (`osc_bounded_frame`, `chain_numeric_slot_malformed`). Core now
+  **60/60 test cases, 1702/1702 assertions** (was 57/57, 1689) — rebuilt
+  in `build-8d` (MSYS2 ucrt64 g++ 16.2, CMake 4.4.4, Ninja), all green.
+  (b) *`heddle_osc_perf`* (`core/tools/osc_perf.cpp`, links heddle_core
+  only — no JUCE, runs headless on any CI runner): three sections —
+  `[codec]` (encode+decode a 64-param reply: mean 68.7 µs, 0.9
+  Mparam-msg/s, 47.9 MB/s wire), `[param]` (per-op
+  `classify→resolveSlot→setParam`: mean 0.22 µs, **4.7 Msets/s** sustained,
+  jitter p99/mean ×1.86, 4.65 ksets/s at a 1 ms/op budget), `[loopback]`
+  (UDP 127.0.0.1 one-way 7.8 µs mean / set→ack RTT 16.3 µs mean, p99
+  18.2 µs). Emits a human table + a `@@HEDDLE_OSC_PERF@@…@@END@@`
+  machine block. (c) *`heddle-osc-perf-host`*
+  (`host/src/osc_perf_host.cpp`, links heddle_core only — it spawns the
+  child `heddle-host`, like `heddle-bridge-test`): ramps sustained set
+  rates (50→10 000 sets/s, 3 s each) at `/chain/smoke/Gain` against a real
+  `--audio ring` host + live smoke VST3 (block 1024, sr 48000); records
+  set→ack RTT, UDP set loss, and audio-throughput deficit vs the no-load
+  baseline (504.6 blk/s ≈ 10.8× real-time, because the ring-mode pump is a
+  1 ms poller, not a real-time clock). Results: RTT floors at **~23.6 ms
+  median / 31.7 ms p99** across the healthy region (drain-wait-dominated,
+  not the core 16 µs path); **max reliable rate ~1 000 sets/s** (loss <1 %,
+  audio deficit <10 %); below the ceiling audio deficit stays <2 %, rising
+  to ~19 % at 10 000 sets/s as the OSC thread's blocking `chainLock_` hold
+  starves the pump's per-block try-lock. Emits a human table +
+  `@@HEDDLE_OSC_PERF_HOST@@…@@END@@` machine block.
+  (d) *`docs/PERFORMANCE.md`* written (referenced by README, ALIGNMENT.md,
+  ci.yml, and both harness headers but previously absent): both harnesses,
+  all measured numbers, the two-layer interpretation (core path ≪ host
+  drain ceiling), the ~23.6 ms floor attribution (host's 5 ms OSC timer +
+  `runDispatchLoopUntil(20)` message loop — leading candidate is the 20 ms
+  dispatch window dominating the 5 ms timer; a host-side drain-cadence
+  optimization is noted as a lever, deliberately out of scope since 24 ms
+  is inside a human/automation control budget), the audio-deficit
+  "continuous-adjustment smoothness" signal, and the >1×-real-time baseline
+  caveat. (e) *CI* (`.github/workflows/ci.yml`): `core` job gains a
+  `Perf (core OSC benchmark)` step; `host` job gains a `Perf (OSC against a
+  real live host)` step; both `continue-on-error: true`, each cats the
+  report and uploads it as an artifact (`osc-perf-core-<os>` /
+  `osc-perf-host-<os>`) with `if: always()` so numbers are archived even on
+  a flaky/slow runner. All three heredocs re-verified (`verify_ci_heredocs.py`:
+  YAML OK, 3 heredocs SYNTAX OK), matching the repo's mandate to validate
+  bash-in-YAML before pushing.
+  **Remaining: commit + push, CI, verify green.**
 
 - **2026-10-16 (3)** — **Weft → Heddle: full source rename + logo v3 + v0.1.7 bump; local build fully green.**
   Naming decision (Miha): rename to **Heddle** — resolves the Oiko Audio "Weft"

@@ -27,6 +27,31 @@ jobs:
         working-directory: build
         run: ctest --output-on-failure
 
+      - name: Perf (core OSC benchmark)
+        # Core-layer OSC numbers: codec throughput, per-op cost of the
+        # classify->resolveSlot->setParam path (continuous param adjust), UDP
+        # loopback one-way + set->ack RTT, max sustainable set rate. No JUCE,
+        # no audio device / X server, so it runs on every OS in this job.
+        # These are MEASUREMENTS, not pass/fail thresholds -- a slow result is
+        # not a failure (continue-on-error so a flaky/slow runner never reds
+        # the core job; the numbers are still archived below).
+        shell: bash
+        continue-on-error: true
+        run: |
+          perf=$(find build -name 'heddle_osc_perf' -o -name 'heddle_osc_perf.exe' | head -n1)
+          [ -n "$perf" ] && [ -x "$perf" ] || { echo "::warning::heddle_osc_perf binary not found"; exit 0; }
+          "$perf" > osc_perf_core.txt 2>&1 || true
+          echo "--- core OSC perf report ---"
+          cat osc_perf_core.txt
+
+      - name: Upload core perf report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: osc-perf-core-${{ matrix.os }}
+          path: osc_perf_core.txt
+          if-no-files-found: ignore
+
   host:
     strategy:
       fail-fast: false
@@ -68,11 +93,11 @@ jobs:
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: cmake --build build --config Release --target heddle_smoke heddle_smoke_plugin_VST3 heddle-render heddle-host heddle-bridge-test heddle_bridge_plugin_VST3 --verbose
+        run: cmake --build build --config Release --target heddle_smoke heddle_smoke_plugin_VST3 heddle-render heddle-host heddle-bridge-test heddle-osc-perf-host heddle_bridge_plugin_VST3 --verbose
 
       - name: Build (Linux / macOS)
         if: runner.os != 'Windows'
-        run: cmake --build build --target heddle_smoke heddle_smoke_plugin_VST3 heddle-render heddle-host heddle-bridge-test heddle_bridge_plugin_VST3 -v
+        run: cmake --build build --target heddle_smoke heddle_smoke_plugin_VST3 heddle-render heddle-host heddle-bridge-test heddle-osc-perf-host heddle_bridge_plugin_VST3 -v
 
       - name: Locate built VST3 plugin
         id: loc
@@ -303,3 +328,28 @@ jobs:
           [ -n "$host" ] && [ -x "$host" ] || { echo "::error::heddle-host binary not found"; exit 1; }
           "$bridge" "$host" "${{ steps.loc.outputs.path }}"
           echo "BRIDGE OK"
+
+      - name: Perf (OSC against a real live host)
+        # Host-level OSC numbers against a REAL heddle-host (--audio ring +
+        # live VST3): set->ack RTT through the 5 ms OSC drain + live VST3,
+        # UDP set loss (max reliable rate), and audio throughput deficit /
+        # input backlog under sustained set load (the smoothness signal).
+        # Measurements, not thresholds: continue-on-error + artifact upload,
+        # same policy as the core perf step.
+        shell: bash
+        continue-on-error: true
+        run: |
+          perfhost=$(find build -name 'heddle-osc-perf-host' -o -name 'heddle-osc-perf-host.exe' | head -n1)
+          [ -n "$perfhost" ] && [ -x "$perfhost" ] || { echo "::warning::heddle-osc-perf-host binary not found"; exit 0; }
+          host=$(find build -name 'heddle-host' -o -name 'heddle-host.exe' | head -n1)
+          "$perfhost" "$host" "${{ steps.loc.outputs.path }}" --duration 2 --rates 50,200,500,1000,2000,5000 > osc_perf_host.txt 2>&1 || true
+          echo "--- host OSC perf report ---"
+          cat osc_perf_host.txt
+
+      - name: Upload host perf report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: osc-perf-host-${{ matrix.os }}
+          path: osc_perf_host.txt
+          if-no-files-found: ignore
