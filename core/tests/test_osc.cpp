@@ -79,6 +79,55 @@ TEST_CASE("rejects truncated and empty input") {
     CHECK_FALSE(oscDecode(garbage, 8, dec));
 }
 
+TEST_CASE("rejects args that run past the declared frame length") {
+    // A malformed (or malicious) encoder may understate the length header:
+    // declare only addr+tags while the tag section still demands a float.
+    // The decoder must refuse the frame — not read the "argument" out of
+    // whatever bytes follow the declared frame in the datagram buffer.
+    const std::string good = oscEncode(OscMsg::make("/x", 1.0f));
+    REQUIRE(good.size() == 4 + 12);  // hdr + addr(4) + tags(4) + float(4)
+    std::string frame = good;
+    const uint32_t bogus = 8;  // addr(4) + tags(4): stops before the float
+    frame[0] = char((bogus >> 24) & 0xff);
+    frame[1] = char((bogus >> 16) & 0xff);
+    frame[2] = char((bogus >> 8) & 0xff);
+    frame[3] = char(bogus & 0xff);
+    for (size_t i = 12; i < frame.size(); ++i) frame[i] = char(0xAB);  // sentinel
+    OscMsg dec;
+    CHECK_FALSE(oscDecode(frame.data(), frame.size(), dec));
+}
+
+TEST_CASE("ignores trailing bytes beyond the declared frame length") {
+    // The declared length, not the buffer size, delimits a message: padding
+    // or a coalesced following datagram after 4+total is not part of it.
+    const std::string enc = oscEncode(OscMsg::make("/x", 1.0f));
+    std::string padded = enc;
+    padded += "\xAA\xAA\xAA\xAA";
+    OscMsg dec;
+    CHECK(oscDecode(padded.data(), padded.size(), dec));
+    CHECK(dec.addr == "/x");
+    CHECK(dec.floats.size() == 1);
+}
+
+TEST_CASE("rejects tag args that underflow the frame") {
+    OscMsg dec;
+    // Tags claim a string but the frame ends before the NUL terminator.
+    // addr "/x\0\0" (4) + tags ",s\0\0" (4) = 8 declared, no string bytes.
+    const char buf[12] = {0, 0, 0, 8, '/','x',0,0, ',', 's',0,0};
+    CHECK_FALSE(oscDecode(buf, sizeof(buf), dec));
+    // Tags claim a blob whose length field itself lies past the frame end.
+    const char buf2[12] = {0, 0, 0, 8, '/','x',0,0, ',', 'b',0,0};
+    CHECK_FALSE(oscDecode(buf2, sizeof(buf2), dec));
+    // pos>limit guard: declared total is NOT 4-aligned (11). addr(4) +
+    // tags ",sf"(8) + an empty string at offset 12 whose NUL pads to 16 —
+    // past the declared end (15). The trailing 'f' tag would then demand a
+    // 4-byte float: with a bare `k <= limit - pos` the comparison underflows
+    // size_t to true and the read runs 4 bytes off the end of the datagram.
+    // The decoder must reject the frame instead.
+    const char buf3[15] = {0, 0, 0, 11, '/','x',0,0, ',', 's','f',0, 0, 0, 0};
+    CHECK_FALSE(oscDecode(buf3, sizeof(buf3), dec));
+}
+
 }  // namespace
 TEST_SUITE_END();
 

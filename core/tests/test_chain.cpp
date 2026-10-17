@@ -161,6 +161,15 @@ TEST_CASE("resolveSlot accepts index and id") {
     CHECK(chain.resolveSlot("dly") == 1);
     CHECK(chain.resolveSlot("9") == -1);
     CHECK(chain.resolveSlot("missing") == -1);
+    // Pathological numeric tokens: the bounded parse must not rely on
+    // atoi() (silent overflow / UB on >INT_MAX) — huge values simply
+    // resolve to "no such slot".
+    CHECK(chain.resolveSlot("00") == 0);
+    CHECK(chain.resolveSlot("01") == 1);
+    CHECK(chain.resolveSlot("4294967296") == -1);            // 2^32
+    CHECK(chain.resolveSlot("99999999999999999999") == -1);  // 20 digits
+    // Same guarantee through the public set path: no crash, just -1.
+    CHECK(chain.setParam("99999999999999999999", "Threshold", 0.5f) < 0.f);
 }
 
 TEST_CASE("resetToDefaults restores plugin defaults") {

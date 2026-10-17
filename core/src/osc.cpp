@@ -22,10 +22,17 @@ void putF32(std::string& s, float v) {
 
 struct Reader {
     const char* p;
-    size_t n;
+    size_t limit;  // end of the declared frame: 4 + declared-length header
     size_t pos = 0;
 
-    bool have(size_t k) const { return pos + k <= n; }
+    // Every read must stay inside the *declared* frame, not merely the
+    // buffer the datagram happened to occupy: bytes past the declared
+    // length are not part of this message, so a parse that would reach
+    // them is malformed. Guarded against pos>limit (a malformed frame whose
+    // final-string padding overshoots the declared end) — a bare
+    // `k <= limit - pos` would underflow size_t and wrongly return true,
+    // letting a later arg read run off the end of the datagram.
+    bool have(size_t k) const { return pos <= limit && k <= limit - pos; }
     char peek() const { return have(1) ? p[pos] : 0; }
     void skip(size_t k) { pos += k; }
 
@@ -105,7 +112,11 @@ bool oscDecode(const char* data, size_t len, OscMsg& out) {
     if (!data || len < 4 + 1) return false;
     Reader r{data, len};
     uint32_t total = r.u32();
-    if (total == 0 || total + 4 > len) return false;
+    if (total == 0 || total > len - 4) return false;
+    // Parse only the declared frame. Bytes after 4+total belong to the
+    // next datagram (or padding), and a malformed tag section must not be
+    // able to read them: bound every read to the declared length.
+    r.limit = 4 + size_t(total);
     out = OscMsg{};
     auto addrPair = r.oscString();
     out.addr = addrPair.first;
@@ -118,9 +129,20 @@ bool oscDecode(const char* data, size_t len, OscMsg& out) {
     size_t fi = 0, ii = 0, si = 0;
     for (char t : tags) {
         switch (t) {
-        case 'f': out.floats.push_back(r.f32()); break;
-        case 'i': out.ints.push_back(int32_t(r.u32())); break;
-        case 's': out.strs.push_back(r.oscString().first); break;
+        case 'f':
+            if (!r.have(4)) return false;
+            out.floats.push_back(r.f32());
+            break;
+        case 'i':
+            if (!r.have(4)) return false;
+            out.ints.push_back(int32_t(r.u32()));
+            break;
+        case 's': {
+            auto sp = r.oscString();
+            if (!sp.second) return false;
+            out.strs.push_back(sp.first);
+            break;
+        }
         case 'b': {
             if (!r.have(4)) return false;
             uint32_t blen = r.u32();

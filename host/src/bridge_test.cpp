@@ -83,17 +83,22 @@ ChildHandle spawnChild(const std::string& exe, const std::vector<std::string>& a
     if (a.find_first_of(" \\\"") == std::string::npos) {
       cmd += a;
     } else {
+      // MS command-line quoting: wrap in double quotes, double every
+      // backslash, escape embedded quotes. (The older single-backslash
+      // variant left a trailing backslash before the closing quote, which the
+      // CRT parser reads as an escaped quote and swallows the rest of the
+      // command line into argv[1]. CI used forward-slash paths from find(),
+      // which never trigger this branch.)
       cmd += "\"";
       size_t backslashes = 0;
       for (char c : a) {
         if (c == '\\') { backslashes++; continue; }
-        cmd.append(backslashes, '\\');
+        cmd.append(backslashes * 2, '\\');
         if (c == '"') cmd.push_back('\\');
         backslashes = 0;
         cmd.push_back(c);
       }
-      cmd.append(backslashes, '\\');
-      cmd.push_back('\\');
+      cmd.append(backslashes * 2, '\\');
       cmd.push_back('"');
     }
   }

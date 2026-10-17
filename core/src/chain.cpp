@@ -1,7 +1,6 @@
 #include "heddle/chain.hpp"
 
 #include <cstring>
-#include <cstdlib>
 
 namespace heddle {
 
@@ -117,9 +116,16 @@ int Chain::resolveSlot(const std::string& token) const {
     for (char c : token)
         if (c < '0' || c > '9') { numeric = false; break; }
     if (numeric) {
-        int idx = std::atoi(token.c_str());
-        if (idx >= 0 && idx < (int)sets_.size()) return idx;
-        return -1;
+        // Bounded manual parse: std::atoi overflows silently on
+        // pathological tokens (e.g. 20 digits) — undefined behaviour on
+        // most platforms. Slot counts are tiny; any value >= sets_.size()
+        // is simply "no such slot".
+        long idx = 0;
+        for (char c : token) {
+            idx = idx * 10 + (c - '0');
+            if (idx >= (long)sets_.size()) return -1;
+        }
+        return (int)idx;
     }
     for (size_t i = 0; i < sets_.size(); ++i)
         if (sets_[i].pluginId == token) return int(i);
