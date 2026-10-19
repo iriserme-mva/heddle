@@ -165,9 +165,13 @@ Heddle is informed by (and deliberately distinct from):
 
 ## License
 
-Heddle's own source is **MIT**-licensed (see [LICENSE](LICENSE)). The plugin
-ecosystem is what you bring in — Heddle neither bundles nor distributes any
-third-party plugin.
+Heddle's own source is licensed under the **Heddle License** (see [LICENSE](LICENSE)):
+the project owner (Mykhailo) may use it for **any purpose, including commercial**,
+while everyone else may use, modify, and distribute it **for non-commercial
+purposes only** (personal, academic, research). Commercial use by any other
+party requires a written commercial license from the owner
+(neworldemancer@gmail.com). The plugin ecosystem is what you bring in — Heddle
+neither bundles nor distributes any third-party plugin.
 
 **Code-only policy.** This repo publishes **source only**: no prebuilt
 binaries are committed, released, or kept on GitHub. Building is done locally
@@ -180,11 +184,13 @@ artifacts, v0.1.0–v0.1.5, have been removed from GitHub for the reason below.)
 distribution is restricted:
 - **JUCE 8.0.4** — dual-licensed **AGPL-3.0 / commercial**. JUCE is fetched at
   build time (`FetchContent`, pinned by SHA256) and never vendored, so the
-  *source* repo stays plain MIT. Distributing a *built* host binary legally
-  requires either a commercial JUCE licence or an AGPL-3.0 relicense of the
+  *source* repo keeps the plain Heddle License. Distributing a *built* host
+  binary legally requires either a commercial JUCE licence or an AGPL-3.0
+  relicense of the
   host layer with a corresponding-source offer.
 - **VST3 SDK** (Steinberg) — proprietary (signed agreement) or **GPLv3**.
 
-Core-only use stays plain MIT. If Heddle is ever distributed commercially as
-prebuilt binaries, the plan is to buy the JUCE commercial licence (keeping MIT);
-until then the project stays code-only.
+Core-only use stays under the plain Heddle License. If Heddle is ever
+distributed commercially as prebuilt binaries, the plan is to buy the JUCE
+commercial licence (the Heddle License already permits the owner commercial
+use); until then the project stays code-only.

@@ -18,7 +18,7 @@ time-series params).
 │  - (planned) full host app: OSC server + GUI (IO linking), │
 │    ASIO / virtual-cable audio routing                      │
 ├────────────────────────────────────────────────────────────┤
-│  core/  (platform-agnostic C++17, MIT)                     │
+│  core/  (platform-agnostic C++17, Heddle License)          │
 │  - Param/ParamSet model        (param.hpp)                 │
 │  - time-series params, static|curve (curve.hpp)            │
 │  - Chain + IPluginBackend      (chain.hpp)                 │

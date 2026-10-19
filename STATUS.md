@@ -7,7 +7,7 @@ current after every session** — last section first.
 
 - ✅ done · 🔨 in progress · ⏸ blocked (state why) · 📅 planned
 
-## Current state (2026-10-17)
+## Current state (2026-10-19)
 
 | Layer | Status |
 |---|---|
@@ -31,8 +31,59 @@ current after every session** — last section first.
 | host: t5 bridge (`heddle-host --audio ring` + HeddleBridge VST3 + `heddle-bridge-test`) | ✅ written + local green (re-verified post-rename 2026-10-16 after clean reconfigure — stale CMakeCache pitfall, see log 2026-10-16 (3)): shared-memory SPSC ring pair (`heddle.bridge.in/.out`, heddle_core `AudioRing`) + OSC control on the headless host; `heddle-bridge-test` (heddle_core only, no JUCE) spawns the host, asserts Gain-0.5 round-trip (mean 0.25, both channels) + OSC `/chain/query` → `/reply/chain` + `/chain/quit` clean exit. Debugged: JUCE 6-arg `copyFrom` is single-channel (dropped stereo ch1) + `fail()` no-exit cascade masked the OSC check. CI job added (3-OS) — **CI GREEN** (run 38930583651, all 6 jobs, `43a8303`) |
 | core: OSC robustness — bounded frame parse (underflow fix) + bounded numeric-slot parse | ✅ **CI GREEN** (run 39054404258, all 6 jobs): `osc.cpp` frame read guarded (size-prefix underflow could read past buffer end); `chain.cpp` numeric-slot param parse rejects malformed; 2 new doctest cases (60/60 local) |
 | perf: `heddle_osc_perf` (core OSC benchmark, no JUCE) + `heddle-osc-perf-host` (OSC vs real live host) | ✅ **CI GREEN** (run 39054404258, all 6 jobs): core set path 0.22 µs/4.7 Msets/s, UDP loopback RTT ~16 µs; host drain floor ~23.6 ms, ~1 ksets/s max reliable, audio deficit <2 % below ceiling; `docs/PERFORMANCE.md` written; both wired into CI (continue-on-error, reports archived as artifacts) |
+| audio: sample-level loss proof — `heddle-osc-loss-test` + lock-free host rework | ✅ **LOCAL GREEN** (2026-10-19, unpushed — CI pending): rectangular 4096-sample loop (1024·0 + 2048·(−1.5) + 1024·0) streamed through the live host + identity smoke VST3, compared sample-for-sample: **0 samples lost in ALL 8 phases (baseline + 50…10,000 sets/s)**; offset constant 1024 s (21.33 ms) at every rate; control kick-in median 42.7 ms (≤ 2 blocks). Host pump reworked: lock-free AudioRing drain + output backpressure + absolute-schedule busy-spin pacing (no catch-up bursts) |
+| licensing: Heddle License (owner commercial, third parties non-commercial) | ✅ **LOCAL** (2026-10-19, unpushed — CI pending): root `LICENSE` + `core/LICENSE` rewritten (custom header + GPL-3.0 reference text); owner (Mykhailo) retains irrevocable commercial rights, all others restricted to non-commercial (personal/academic/research); commercial use by others requires a written licence (neworldemancer@gmail.com); README + docs/ARCHITECTURE re-synced, zero MIT references remain |
 
 ## Log
+
+- **2026-10-19 (1)** — **Sample-level audio-loss proof (Miha's acceptance criterion) + host pump rework + Heddle License. Local green, unpushed — CI pending.**
+  Miha rejected the aggregate "audio deficit" metric ("deficit is not exactly
+  zero?") and specified the real test: a fixed rectangular loop
+  (1024 s × 0.0 + 2048 s × −1.5 + 1024 s × 0.0, 4096-sample period, 48 kHz)
+  streamed into the live host, captured out of the output ring, compared
+  sample-for-sample — *all 2048 non-zero samples must arrive intact even
+  while OSC control saturates the message thread*, plus offset and
+  offset-vs-control-kick-in measurement.
+  (a) *Host rework* (`host/src/host_main.cpp`): the pump thread's audio-ring
+  drain was the loss path — it `GenericScopedTryLock`-ed `chainLock_` the
+  same lock the message thread holds for the whole 5 ms OSC poll tick, and
+  under load the try-lock lost → dropped pump blocks. Reworked to: drain the
+  input AudioRing **without** the model lock (lock-free ring read), run the
+  chain under the lock only for the block render, apply **output backpressure**
+  (never drop an output frame — stall instead), and **absolute-schedule
+  busy-spin pacing** for both producer and pump (Windows `sleep_for` 15 ms
+  granularity was creating catch-up bursts; spin-wait holds sub-ms phase).
+  (b) *`heddle-osc-loss-test`* (`host/src/osc_loss_test.cpp`, new target in
+  `host/CMakeLists.txt`): spawns `heddle-host` headless with the identity
+  smoke VST3 (Gain=1.0, PWM=1.0 ⇒ output must equal input byte-for-byte),
+  feeds the rectangular loop at real-time pace, captures the output ring,
+  matches pulses **by gap** (start-to-start = 4096, interior pulse length =
+  2048 — robust to slice boundaries), reports offset (totalWritten −
+  outIndex), per-phase sample loss, and control kick-in (gain 1.0→0.5
+  flipped at a pulse start; first |x|≈0.75 output sample scanned from K−D).
+  Kick-in window bug found via stderr diagnostics: the producer advances the
+  phase in whole 1024-sample blocks so `phase % 4096` only ever hits
+  {0, 1024, 2048, 3072} — the original [1100, 1600] window was mathematically
+  unreachable (n_valid=0 at every kick); fixed to `ph == 1024` (pulse start),
+  comment in code explains the granularity constraint.
+  **Result (build-msvc-perf2, VS 2022 / cmake 3.31, 3 s per phase):**
+  **samples_lost = 0 in all 8 phases** (baseline + 50/200/500/1000/2000/5000/
+  10000 sets/s), pulses_expected = pulses_observed at every rate, offset
+  constant at 1024 s (21.33 ms) across all phases, kick-in min 21.3 /
+  median 42.7 / max 64.0 ms (1–2 blocks). Control-plane unacked % at ≥2000
+  sets/s is UDP/ack-polling saturation — the audio ring is untouched.
+  Infographic: `D:\Hermes\MV\infographic\heddle-waveform-loss\` (generator +
+  3200×1800 PNG, delivered to chat).
+  (c) *Heddle License* (Miha: "ensure licence prohibits commercial use by
+  others, but allows for me"): root `LICENSE` + `core/LICENSE` rewritten —
+  custom "Heddle License" header (owner = Mykhailo (MV); irrevocable,
+  perpetual, worldwide, sublicensable owner rights **including commercial**;
+  third parties non-commercial only: personal/academic/research; commercial
+  use by others requires a written licence from the owner,
+  neworldemancer@gmail.com; JUCE/deps keep their own licences) + GPL-3.0 text
+  appended for reference (VST3-SDK gate, see 2026-10-15 licensing note).
+  README license section + JUCE distribution note + code-only note, and
+  docs/ARCHITECTURE.md, re-synced — `grep MIT` in docs = 0 hits.
 
 - **2026-10-17 (2)** — **Pushed + CI in progress.** Both working commits are on `main` and the CI run for the head is in flight:
   - `6265f4a` — core: bound OSC frame parse + reject malformed numeric-slot param (the (a) robustness piece of log (1), +2 doctest cases).
