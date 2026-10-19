@@ -166,3 +166,22 @@ target_link_libraries(heddle-osc-perf-host
     PRIVATE
         heddle_core
 )
+
+# ---- heddle-osc-loss-test (sample-level round-trip loss, headless) ----------
+# heddle-osc-loss-test <heddle-host> <smoke-vst3> [--duration SEC]
+#     [--rates 50,200,500,1000,2000,5000,10000] [--block N] [--rate SR] [--kick N]
+#
+# The SAMPLE-LEVEL complement to heddle-osc-perf-host. Instead of a block-count
+# deficit it streams a known 4096-sample rectangular loop (1024 zero + 2048 x
+# -1.5 + 1024 zero) into the host's input ring, captures the output ring, and
+# verifies sample-for-sample that all 2048 non-zero samples per loop survive --
+# baseline and under sustained OSC set load -- plus the round-trip offset and
+# the control kick-in delay. Links ONLY heddle_core (no JUCE), runs headless;
+# the child heddle-host does the JUCE/audio work.
+add_executable(heddle-osc-loss-test
+    src/osc_loss_test.cpp
+)
+target_link_libraries(heddle-osc-loss-test
+    PRIVATE
+        heddle_core
+)

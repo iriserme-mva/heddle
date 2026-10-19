@@ -47,15 +47,45 @@
 //
 // Threading model
 // ---------------
-// ONE juce::CriticalSection (chainLock_) guards the chain model AND the
-// plugin instances (JuceBackend). The audio side (device callback, or the
-// null-clock thread) takes it NON-blocking; on contention it outputs
-// silence for that block. The message thread (OSC handlers, model refresh)
-// takes it blocking. So there is exactly one writer at a time, and the
-// audio never stalls on a message-thread reset.
+// The audio side (device callback, or the null/ring pump thread) NEVER
+// waits or skips on message-thread activity. Parameter changes are
+// lock-free end to end: an OSC/GUI set calls the backend's
+// setValueNotifyingHost from the message thread, which JUCE's VST3 host
+// wrapper turns into atomic cached-value stores + a thread-safe
+// parameter-dispatcher queue; the audio callback drains that queue into
+// VST3 IParameterChanges at the top of each process() and the plugin
+// latches the values inside its own process context. No shared lock
+// exists on the param path — the same model every DAW host uses, so a
+// param write mid-block can never stall, skip, or silence an audio
+// block. Continuous param adjustment costs the audio path ~0
+// (measured: see docs/PERFORMANCE.md).
 //
-// An OSC set marks the param "user-locked": curve automation stops touching
-// it until /chain/<slot>/reset or a hot-apply.
+// The ONE cross-thread meeting point is structural change (hot-apply:
+// config swap / plugin (re)load, which destroys/recreates plugin
+// instances). For those, the message thread calls quiesceAudio() — it
+// spins until the in-flight audio block completes (bounded by one block,
+// ~1-21 ms), then performs the swap while no callback can be running.
+// The audio thread never waits for the message thread.
+//
+// Shared state after the rework:
+//   * cfg_ / curve tables / chain model: written only on the message
+//     thread, and only after quiesceAudio(); the audio callback reads
+//     cfg_.slots concurrently (concurrent reads are fine; the only
+//     writer quiesces first).
+//   * backend_ param calls (setParams/paramValue/setValue): JUCE
+//     thread-safe (atomics + dispatcher), callable from either thread.
+//   * backend_.process / setProcessSpec: audio thread; setProcessSpec
+//     only on spec change (first block / device change).
+//   * chainFrame_: atomic, audio thread increments, message thread reads
+//     (status line, curve evaluation).
+//   * work buffers + ring scratch: audio thread only.
+//
+// An OSC set marks the param "user-locked": curve automation stops
+// touching it until /chain/<slot>/reset or a hot-apply. Curve automation
+// itself is evaluated on the message-thread 5 ms timer (200 Hz), not in
+// the audio callback — at 48 kHz a 1024-frame block is 21 ms, so
+// per-block evaluation was only 47 Hz anyway; 200 Hz is strictly finer
+// and keeps the audio callback a pure DSP consumer.
 //
 // Headless pattern: plain main() + juce::initialiseJuce_GUI() — the same
 // shape heddle_smoke / heddle-render already build with in CI (no
@@ -174,13 +204,21 @@ private:
 // Audio-ring pump for --audio ring: paces the ring form of
 // audioDeviceIOCallbackWithContext (numSamples == 0, null buffers) at the
 // config's rate/block, but only when the producer actually has a full block
-// of data in the input ring. The callback itself decides the block size from
-// its config when numSamples <= 0 (identical to the null-clock tick); the
+// of data in the input ring AND the consumer has room for a full block in
+// the output ring. The callback itself decides the block size from its
+// config when numSamples <= 0 (identical to the null-clock tick); the
 // ring-mode run() override in HeddleHost feeds the real audio in/out through
 // the rings. When the input ring is empty the callback is NOT invoked (no
 // chain processing, no output written), so the consumer side (the DAW-side
 // bridge or the round-trip test) simply sees no new output until input
 // arrives.
+//
+// Backpressure (the output-space check): the callback's ringOut write is
+// best-effort (a full ring returns 0 and DROPS the block). Checking
+// spaceAvailable() >= frames_ before every tick makes the ring pair a true
+// lossless FIFO in both directions: a slow consumer stalls the pump
+// (backpressure) instead of silently eating output samples. Both rings are
+// SPSC, so these two cursor reads are lock-free and race-safe.
 class AudioRingPumpThread : public juce::Thread {
 public:
     AudioRingPumpThread() : juce::Thread("heddle-ring-pump") {}
@@ -193,21 +231,53 @@ public:
         cb_ = cb;
         inRing_ = inRing;
         outRing_ = outRing;
-        frames_ = blockSize > 0 ? blockSize : 512;
-        (void)sampleRate;
-        (void)outRing;
-        pollMs_ = 1;
+        const int bs = blockSize > 0 ? blockSize : 512;
+        frames_ = bs;
+        // Real-time pacing (exactly like NullClockThread): one block's worth of
+        // audio takes bs*1000/sampleRate ms. A fixed 1 ms poll instead would
+        // pump ~(1000*bs/sr) blocks/s — for the default 1024@48k that is 1000
+        // blocks/s vs 46.9/s in real time, i.e. the pump runs the chain 21x
+        // faster than real time, the input ring backlogs to full, and the
+        // output offset drifts. Pacing at the block's real-time duration keeps
+        // input write rate ~= pump rate, the pipeline depth stable, and the
+        // round-trip offset measurable.
+        blockNs_ = (long long)(std::ceil(
+            (double)bs * 1e9 / (double)std::max(1, sampleRate)));
     }
 
     void stopPump() { running_ = false; }
 
 private:
     void run() override {
+        auto target = std::chrono::steady_clock::now();
         while (running_) {
-            if (cb_ != nullptr && inRing_ != nullptr &&
-                inRing_->dataAvailable() >= frames_)
+            const bool busy = (cb_ != nullptr && inRing_ != nullptr && outRing_ != nullptr &&
+                               inRing_->dataAvailable() >= frames_ &&
+                               outRing_->spaceAvailable() >= frames_);
+            if (busy) {
                 cb_->audioDeviceIOCallbackWithContext(nullptr, 0, nullptr, 0, 0, {});
-            std::this_thread::sleep_for(std::chrono::milliseconds(pollMs_));
+                // Advance the real-time schedule by one block AFTER processing
+                // (never before, and only when a block actually went through —
+                // otherwise a backpressure stall would eat time and the pump
+                // would run slower than real time).
+                target += std::chrono::nanoseconds(blockNs_);
+            } else {
+                // Blocked on input/output: re-anchor so a long stall doesn't
+                // accumulate into a catch-up burst.
+                target = std::chrono::steady_clock::now();
+            }
+            // Absolute-schedule sleep: sleep_for(pollMs_) would drift on
+            // Windows (15 ms timer granularity) and slowly desync input/pump,
+            // corrupting the round-trip sample accounting. Sleep until near the
+            // target, then busy-spin the last ~2 ms for sub-millisecond
+            // accuracy (the window is tiny, so the CPU cost is negligible).
+            while (running_) {
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= target) break;
+                const auto rem = std::chrono::duration_cast<std::chrono::nanoseconds>(target - now).count();
+                if (rem > 2000000)
+                    std::this_thread::sleep_for(std::chrono::nanoseconds(rem - 2000000));
+            }
         }
     }
 
@@ -215,7 +285,7 @@ private:
     heddle::AudioRing* inRing_ = nullptr;
     heddle::AudioRing* outRing_ = nullptr;
     int frames_ = 512;
-    int pollMs_ = 1;
+    long long blockNs_ = 21333;  // 1024 @ 48k
     std::atomic<bool> running_{true};
 };
 
@@ -264,13 +334,11 @@ public:
                         lastSrc_);
         });
 
-        // Open the GUI window BEFORE starting the audio thread. The GUI
-        // constructor takes chainLock_ once (blocking, ScopedLock) to build
-        // its initial snapshot; the audio thread (null software clock or real
-        // device) hammers chainLock_ with high-frequency try-locks every block
-        // and would starve that one-shot acquisition (observed: ctor blocked
-        // on the lock forever). After startup the GUI only ever uses
-        // non-blocking try-locks from its timer, so the order is safe.
+        // Open the GUI window BEFORE starting the audio thread. The chain
+        // model is message-thread-only (the audio callback no longer reads
+        // it), so no lock-ordering hazard remains; the ordering is kept
+        // because the window's initial snapshot is cheapest before the
+        // audio side starts mutating plugin state.
         if (args_.gui)
             guiStart();  // open the param-control window (message thread)
 
@@ -365,16 +433,13 @@ public:
             nullTick ? (cfg_.sampleRate > 0 ? static_cast<double>(cfg_.sampleRate) : 44100.0)
                      : (devRate_ > 0.0 ? devRate_ : static_cast<double>(cfg_.sampleRate));
 
-        // Contention policy: the message thread may be mid-reset/apply; never
-        // block the audio for it. Silence for this block and move on.
-        juce::GenericScopedTryLock<juce::CriticalSection> tryLock(chainLock_);
-        if (!tryLock.isLocked()) {
-            if (outData != nullptr)
-                for (int c = 0; c < numOuts; ++c)
-                    if (outData[c] != nullptr)
-                        std::fill(outData[c], outData[c] + frames, 0.f);
-            return;
-        }
+        // The audio side never waits or skips (the old try-lock + silence
+        // policy is gone — see the threading-model comment at the top of
+        // this file). Parameter changes are lock-free end to end, so there
+        // is nothing to contend on. blockInFlight_ only serialises
+        // structural swaps (quiesceAudio) — it is never waited on by the
+        // audio side.
+        blockInFlight_.store(true, std::memory_order_seq_cst);
 
         if (specRate_ != rate || specBlock_ != frames) {
             specRate_ = rate;
@@ -415,8 +480,7 @@ public:
             }
         }
 
-        runBlockLocked(runIn, runIns, frames);
-        chainFrame_ += frames;
+        runBlock(runIn, runIns, frames);
 
         if (outData != nullptr) {
             const int width = std::max(1, numOuts);
@@ -447,6 +511,8 @@ public:
                 ringOut_.write(ringOutBuf_.data(), (size_t)frames);
             }
         }
+
+        blockInFlight_.store(false, std::memory_order_seq_cst);
     }
 
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override {
@@ -478,12 +544,14 @@ public:
             lastSrc_ = src;
             handleOsc(msg, src);
         }
+        curveAutomationTick();
         refreshModel();
         guiPull();
     }
 
-    // The --gui content reads the chain model directly (message thread,
-    // chainLock_ held by the caller); see ChainGuiContent below.
+    // The --gui content reads the chain model directly (message thread; the
+    // model is message-thread-only after the lock-free rework); see
+    // ChainGuiContent below.
     friend class ChainGuiContent;
 
     // ---- --gui entry points (message thread) --------------------------------
@@ -620,8 +688,13 @@ private:
         return true;
     }
 
-    // ---- per-block processing (chainLock_ held) ------------------------------
-    void runBlockLocked(const float* const* inData, int numIns, int frames) {
+    // ---- per-block processing (audio thread; no locks) ----------------------
+    // Pure DSP consumer: no param evaluation, no model reads beyond the
+    // slot list (concurrent-read safe; see threading model at top of file).
+    // Param values are latched by the plugins themselves via VST3
+    // IParameterChanges (JUCE drains the atomic cached-value queue inside
+    // each process()), so continuous adjustment never touches this path.
+    void runBlock(const float* const* inData, int numIns, int frames) {
         const int width = std::max(2, backend_.busWidth());
         if ((int)workIn_.getNumChannels() < width || workIn_.getNumSamples() < frames) {
             workIn_.setSize(width, frames);
@@ -640,30 +713,6 @@ private:
                 if (inData[c] != nullptr)
                     std::memcpy(workIn_.getWritePointer(c), inData[c],
                                 static_cast<size_t>(frames) * sizeof(float));
-
-        // Curve automation: only curved params, skip user-locked ones.
-        for (const auto& kv : curveTables_) {
-            const int slotIdx = kv.first;
-            if (slotIdx < 0 || slotIdx >= (int)cfg_.slots.size()) continue;
-            const SlotConfig& sc = cfg_.slots[slotIdx];
-            if (!sc.enabled) continue;
-            std::vector<std::pair<std::string, float>> changed;
-            for (const auto& name : kv.second) {
-                const ParamSpec* spec = sc.paramSpec(name);
-                if (spec == nullptr) continue;
-                const float v = Param::clamp01(spec->at(chainFrame_));
-                const auto key = std::make_pair(slotIdx, name);
-                auto it = prevCurve_.find(key);
-                if (it == prevCurve_.end() || std::fabs(v - it->second) > 1e-6f) {
-                    const auto lk = userLocked_.find(key);
-                    if (lk == userLocked_.end() || !lk->second)
-                        changed.emplace_back(name, v);
-                    prevCurve_[key] = v;
-                }
-            }
-            if (!changed.empty())
-                backend_.setParams(sc.id, changed);
-        }
 
         // Ping-pong the enabled slots (same idiom as render.cpp).
         juce::AudioBuffer<float>* cur = &workIn_;
@@ -690,6 +739,50 @@ private:
             for (int c = 0; c < n; ++c)
                 workOut_.copyFrom(c, 0, *cur, c, 0, frames);
         }
+
+        chainFrame_.fetch_add(frames, std::memory_order_relaxed);
+    }
+
+    // ---- curve automation (message thread, 5 ms timer; 200 Hz) --------------
+    // Moved out of the audio callback: it only touches the chain model, the
+    // user-lock map, and backend_ param pushes (all JUCE thread-safe). At
+    // 48 kHz / 1024-frame blocks the old per-block evaluation ran at ~47
+    // Hz; 200 Hz is strictly finer and the callback stays pure DSP.
+    void curveAutomationTick() {
+        const int64_t frame = chainFrame_.load(std::memory_order_relaxed);
+        for (const auto& kv : curveTables_) {
+            const int slotIdx = kv.first;
+            if (slotIdx < 0 || slotIdx >= (int)cfg_.slots.size()) continue;
+            const SlotConfig& sc = cfg_.slots[slotIdx];
+            if (!sc.enabled) continue;
+            std::vector<std::pair<std::string, float>> changed;
+            for (const auto& name : kv.second) {
+                const ParamSpec* spec = sc.paramSpec(name);
+                if (spec == nullptr) continue;
+                const float v = Param::clamp01(spec->at(frame));
+                const auto key = std::make_pair(slotIdx, name);
+                auto it = prevCurve_.find(key);
+                if (it == prevCurve_.end() || std::fabs(v - it->second) > 1e-6f) {
+                    const auto lk = userLocked_.find(key);
+                    if (lk == userLocked_.end() || !lk->second)
+                        changed.emplace_back(name, v);
+                    prevCurve_[key] = v;
+                }
+            }
+            if (!changed.empty())
+                backend_.setParams(sc.id, changed);
+        }
+    }
+
+    // ---- structural swap quiesce (message thread) ----------------------------
+    // Waits until the in-flight audio block (if any) finishes, so the
+    // message thread can swap cfg_ / plugin instances with no callback
+    // running. Bounded by one block (~1-21 ms at 48 kHz; ~1 ms in
+    // null/ring mode). The audio side NEVER waits for the message thread —
+    // only this direction exists.
+    void quiesceAudio() {
+        while (blockInFlight_.load(std::memory_order_acquire))
+            juce::Thread::yield();
     }
 
     // Map slot index -> param names that are curves (automation only touches
@@ -712,7 +805,10 @@ private:
         prevCurve_.clear();
     }
 
-    // ---- OSC (message thread; chainLock_ held by every handler) --------------
+    // ---- OSC (message thread; model state is message-thread-only) ------------
+    // No locks: the chain model, cfg_, curve tables, and the user-lock map
+    // are written only on this thread. The one structural mutation (hot
+    // apply, which swaps plugin instances) first quiesces the audio side.
     void reply(const std::string& addr, const std::string& text,
                const OscUdp::SourceAddr& src) {
         osc_.sendTo(OscMsg::make(addr, text), src);
@@ -748,7 +844,6 @@ private:
         }
         // Host extensions (not part of the core classify() surface).
         if (msg.addr == "/chain/status") {
-            juce::ScopedLock lock(chainLock_);
             reply("/reply/status", statusLine(), src);
         } else if (msg.addr == "/chain/quit") {
             reply("/reply/status", "quitting", src);
@@ -757,7 +852,6 @@ private:
     }
 
     void handleQueryChain(const OscUdp::SourceAddr& src) {
-        juce::ScopedLock lock(chainLock_);
         std::string out;
         for (int i = 0; i < chain.numSlots(); ++i) {
             if (i > 0) out += "\n";
@@ -773,7 +867,6 @@ private:
     }
 
     void handleQuerySlot(const std::string& token, const OscUdp::SourceAddr& src) {
-        juce::ScopedLock lock(chainLock_);
         const int idx = chain.resolveSlot(token);
         const ParamSet* ps = idx >= 0 ? chain.slot(idx) : nullptr;
         if (ps == nullptr) {
@@ -790,7 +883,9 @@ private:
     }
 
     void handleSet(const osc_addr::ParamAction& a, const OscUdp::SourceAddr& src) {
-        juce::ScopedLock lock(chainLock_);
+        // chain.setParam -> backend_.setParam (setValueNotifyingHost): JUCE
+        // thread-safe (atomic cached value + parameter dispatcher), so this
+        // races with nothing on the audio side.
         const float v = (a.op == osc_addr::ParamAction::Op::SetByName)
                             ? chain.setParam(a.slotToken, a.param, a.value)
                             : chain.setParamById(a.slotToken, a.paramId, a.value);
@@ -811,7 +906,6 @@ private:
     }
 
     void handleReset(const std::string& token, const OscUdp::SourceAddr& src) {
-        juce::ScopedLock lock(chainLock_);
         const int idx = chain.resolveSlot(token);
         if (idx < 0) {
             reply("/status", "error: no such slot", src);
@@ -838,7 +932,6 @@ private:
     }
 
     void handleResetAll(const OscUdp::SourceAddr& src) {
-        juce::ScopedLock lock(chainLock_);
         chain.resetToDefaults();
         for (size_t i = 0; i < cfg_.slots.size(); ++i) {
             const SlotConfig& sc = cfg_.slots[i];
@@ -868,7 +961,11 @@ private:
                 return;
             }
         }
-        juce::ScopedLock lock(chainLock_);
+        // Structural swap: the hot-apply may destroy/recreate plugin
+        // instances and replace cfg_, so wait for the in-flight audio block
+        // (bounded by one block) before mutating. No audio frame is ever
+        // skipped or silenced by this — the swap simply waits its turn.
+        quiesceAudio();
         if (!chain.apply(next, &err)) {
             reply("/status", "error: apply: " + err, src);
             return;
@@ -883,7 +980,7 @@ private:
     std::string statusLine() const {
         return std::string("heddle-host v") + HEDDLE_VERSION_STRING + " slots=" +
                std::to_string(chain.numSlots()) + " audio=" + args_.audioMode +
-               " frame=" + std::to_string(chainFrame_) +
+               " frame=" + std::to_string(chainFrame_.load(std::memory_order_relaxed)) +
                " rate=" + std::to_string((int)specRate_) +
                " block=" + std::to_string(specBlock_);
     }
@@ -893,10 +990,8 @@ private:
     // changes (in-plugin automation, an editor touched in a DAW) are picked
     // up here by polling the live values and mirrored into the model via
     // Chain::onPluginParamChanged (which also fires the /change push).
+    // backend_.paramValue reads are JUCE thread-safe (atomic cache).
     void refreshModel() {
-        juce::GenericScopedTryLock<juce::CriticalSection> tryLock(chainLock_);
-        if (!tryLock.isLocked())
-            return;  // audio side is mid-block; skip this tick
         for (int idx = 0; idx < chain.numSlots(); ++idx) {
             const ParamSet* ps = chain.slot(idx);
             if (ps == nullptr || ps->params.empty())
@@ -935,14 +1030,22 @@ private:
     OscUdp::SourceAddr lastSrc_{};
 
     std::unique_ptr<NullClockThread> clock_;
-    juce::CriticalSection chainLock_;
+
+    // Lock-free param path: no cross-thread mutex. Structural swaps
+    // (hot-apply) instead use quiesceAudio(): the message thread spins
+    // until the in-flight audio block (if any) finishes, then mutates
+    // cfg_ / the backend. blockInFlight_ is set/cleared around the
+    // callback body; the wait is bounded by one block (~1-21 ms).
+    std::atomic<bool> blockInFlight_{false};
 
     juce::AudioBuffer<float> workIn_, workA_, workB_, workOut_;
     double specRate_ = 0.0;
     int specBlock_ = 0;
     double devRate_ = 0.0;
     int devBlock_ = 0;
-    int64_t chainFrame_ = 0;
+    // Atomic: audio thread increments per processed block; the message
+    // thread reads it (status line, curve evaluation).
+    std::atomic<int64_t> chainFrame_{0};
 
     // --audio ring: the two shared-memory rings (host owns both; the HeddleBridge
     // VST3 or the round-trip test attaches to them). ringIn_ = DAW -> host,
@@ -1100,17 +1203,14 @@ public:
         viewport_->setViewedComponent(page_.get(), false);
         viewport_->setScrollBarsShown(true, false);
         addAndMakeVisible(viewport_.get());
-        {
-            juce::ScopedLock lock(host_->chainLock_);
-            rebuildLocked();
-        }
+        // Message thread; the chain model is message-thread-only, so the
+        // initial snapshot needs no lock. (The window is opened before the
+        // audio thread starts, so nothing else touches the model yet.)
+        rebuildLocked();
     }
 
     // Called from HeddleHost::guiPull() (message thread).
     void tick() {
-        juce::GenericScopedTryLock<juce::CriticalSection> tryLock(host_->chainLock_);
-        if (!tryLock.isLocked())
-            return;  // audio mid-block; skip this tick
         rebuildIfStructureChanged();
         syncValues();
     }
@@ -1131,7 +1231,7 @@ private:
             rows_[i]->setBounds(0, i * ROW_H, width, ROW_H);
     }
 
-    // Rebuild the row list from the chain model. Call with chainLock_ held.
+    // Rebuild the row list from the chain model. Message thread only.
     void rebuildLocked() {
         rows_.clear();  // deletes the rows; each auto-removes itself from page_
         const int nslots = host_->chain.numSlots();
@@ -1293,7 +1393,7 @@ bool HeddleHost::hostGuiSet(int slotIndex, const std::string& name, double norm)
     if (slotIndex < 0 || slotIndex >= chain.numSlots())
         return false;
     const std::string token = cfg_.slots[slotIndex].id;
-    juce::ScopedLock lock(chainLock_);
+    // Lock-free: same path as an OSC set (JUCE thread-safe param push).
     const float v = chain.setParam(token, name, (float)norm);
     if (v < 0.f)
         return false;
