@@ -7,6 +7,26 @@ current after every session** — last section first.
 
 - ✅ done · 🔨 in progress · ⏸ blocked (state why) · 📅 planned
 
+## v0.1.8 release cut (2026-10-22) — code-only, 0 assets by design
+
+- ✅ **Release `v0.1.8`** cut from `3095977` (dynamic automation rate + `hasUpcoming`
+  param suppression + in-block curve scheduling + full perf verification). Version
+  bump `0.1.7 → 0.1.8` in root CMake; CMake-stamped `--version` follows (no test pins
+  the string). CI green on the base commit (run 39669719946, all 6 jobs).
+- ✅ **Post-change proof (36/36):** full `heddle-osc-ramp-test` sweep re-run on
+  `3095977` — in-block 18 + legacy@dynamic 18, **0 audio samples lost, all acked,
+  all `ok`**. In-block cells moved ≤ 0.38pp vs pre-change (send-pacing jitter;
+  path untouched — the tick defers to the audio staircase). Legacy keeps its flat
+  error floor at 2× critical (R² ≥ 0.994 at ≥1 set/block); tick = 96000/block with
+  a 200 Hz floor → 200/200/200/93.75/46.9 Hz for blocks 128…2048.
+- ✅ **Verification infographic** delivered in chat: `infographic/heddle-postchange-verify/`
+  (4 panels: in-block post vs block, legacy@dynamic vs OSC rate, pre→post delta,
+  dynamic-rate heatmap + what-changed box).
+- 📅 **Next:** `heddle-proxy` tool (pass-through VST + standalone exe; TouchOSC input →
+  up to 5 configurable OSC targets, 1–4 abstract control-surface params routable to any
+  enabled target's param, auto-discovered target names, 3-state proxy none/full/only-control
+  skipping ack-back) — for routing one surface to many Heddle instances.
+
 ## Current state (2026-10-19)
 
 | Layer | Status |
