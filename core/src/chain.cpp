@@ -151,4 +151,18 @@ float Chain::setParamById(const std::string& slotToken, uint32_t id, float norm)
     return p->value;
 }
 
+// Model-only: update the param's tracked value WITHOUT latching the plugin.
+// Used by the in-block curve scheduler: a /chain/<slot>/<param> set is
+// scheduled as a waypoint (the audio thread drives the plugin's actual value
+// sample-accurately), so the message thread records the requested value in
+// the model (so /chain queries reflect it) but must not also latch it --
+// that would race the audio thread's staircase on the same plugin param.
+float Chain::setParamModelById(int slotIndex, uint32_t id, float norm) {
+    if (slotIndex < 0 || slotIndex >= (int)sets_.size()) return -1.f;
+    auto* p = sets_[slotIndex].find(id);
+    if (!p) return -1.f;
+    p->value = Param::clamp01(norm);
+    return p->value;
+}
+
 }  // namespace heddle

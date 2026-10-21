@@ -185,3 +185,22 @@ target_link_libraries(heddle-osc-loss-test
     PRIVATE
         heddle_core
 )
+
+# ---- heddle-osc-ramp-test (sample-accurate in-block curve, headless) --------
+# heddle-osc-ramp-test <heddle-host> <smoke-vst3> [--legacy]
+#   [--blocks 128,256,512,1024,2048] [--ppb 0.1,1,10,40]
+# The SAMPLE-LEVEL accuracy complement to heddle-osc-loss-test: a constant
+# +1.0 input is streamed in while the smoke plugin's Gain is swept 0.05->1.00
+# via a ramp of OSC waypoints across a 40960-sample window; the output is
+# compared sample-for-sample against the analytically-interpolated expected
+# gain (max/rms/mae error, kick-in offset, pipeline depth, lost samples).
+# Answers "is 200 sets/s enough?" + the critical rate + the block-size effect.
+# Links ONLY heddle_core (no JUCE), runs headless; the child heddle-host does
+# the JUCE/audio/VST3 work.
+add_executable(heddle-osc-ramp-test
+    src/osc_ramp_test.cpp
+)
+target_link_libraries(heddle-osc-ramp-test
+    PRIVATE
+        heddle_core
+)

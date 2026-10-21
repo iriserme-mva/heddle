@@ -117,6 +117,13 @@ public:
     // Set by param id; returns current value or -1 if not found.
     float setParamById(const std::string& slotToken, uint32_t id, float norm);
 
+    // Model-only set by param id: records the value in the chain's param
+    // surface WITHOUT latching the plugin (no backend_ call). The in-block
+    // curve scheduler uses this so a scheduled OSC set reflects in /chain
+    // queries while the audio thread alone drives the plugin's live value.
+    // Returns the clamped value, or -1 if slot/param not found.
+    float setParamModelById(int slotIndex, uint32_t id, float norm);
+
     const ParamSet* slot(int slotIndex) const {
         return (slotIndex >= 0 && slotIndex < (int)sets_.size()) ? &sets_[slotIndex] : nullptr;
     }

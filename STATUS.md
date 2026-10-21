@@ -36,6 +36,41 @@ current after every session** — last section first.
 
 ## Log
 
+- **2026-10-21** — **In-block OSC curve scheduling: sample-accurate, 0 lost (18-config sweep) + dynamic automation rate + param suppression + docs re-sync. Committed, CI pending.**
+  (a) *In-block scheduler* (built over prior session): an OSC set in
+  `heddle-host` is a **waypoint** (default mode; `--no-inblock` = legacy
+  immediate latch), stamped at `audioBlock + 2`, drained by the audio thread
+  per block, rendered as a 4-sample sub-block staircase (per-param lock-free
+  SPSC ring, cap 512; `InBlockCurve.hpp`, `osc_ramp_test.cpp` harness).
+  18-config sweep (blocks 128–2048 × ppb 0.1/1/10/40): **0 samples lost, 0
+  sets dropped, 21 320/21 320 acked**; critical rate = **1 set/block**
+  (48000/B sets/s); below it error scales with the gap (2.5–7.1 % at
+  ppb 0.1), at/above it a flat 0.8–1.6 % floor (R² ≥ 0.9994) from waypoint
+  pacing + block-boundary quantization. Dump-level check: genuine
+  4-sample staircase (flat-run = substep, jump = slope × substep) — the
+  measured high-ppb "deviation" is a global line-fit reference artifact,
+  not a block-resolution defect.
+  (b) *Dynamic automation rate* (Miha: "200 → 2*48k/b_size/s"): the
+  legacy per-block curve tick now runs at **2 × sampleRate/blockSize Hz**
+  (2 ticks/block — double critical, constant headroom at every block size;
+  750 Hz @128 … 46.9 @1024), computed as a *period* gated inside the
+  constant 5 ms OSC timer (so a long block period never slows OSC polling),
+  re-scaled when the audio device reports its real block size.
+  (c) *Param suppression* (Miha: don't set controls with no upcoming value):
+  `Curve::hasUpcoming(frame)` (O(1), sorted keyframes) — the tick skips any
+  param whose curve has no keyframe after the playhead; work now scales
+  with curves in motion, not the plugin's parameter count.
+  (d) *Docs re-synced*: README gains "Running the live host" (usage flags,
+  VST chain structure, in-block live automation + rate guidance);
+  PERFORMANCE.md gains the in-block curve section (sweep table, critical
+  rate, dynamic cadence, harness) and its stale `chainLock_` narrative is
+  corrected to the lock-free design; `usage()` now documents
+  `--no-inblock`/`--substep`. Verified: full build green, ramp test
+  (128/1024 @ ppb 1: max_err 0.013/0.021, R² ≥ 0.999, 0 lost), null-mode
+  host with a finite config curve runs clean through curve end (suppression
+  path). Deliverables: in-block curve infographic (3200×1800, VLM-QA clean)
+  + password-protected binaries/VST3 zip delivered to chat.
+
 - **2026-10-19 (1)** — **Sample-level audio-loss proof (Miha's acceptance criterion) + host pump rework + Heddle License. Pushed, CI GREEN (run 39286419395, all 6 jobs).**
   Miha rejected the aggregate "audio deficit" metric ("deficit is not exactly
   zero?") and specified the real test: a fixed rectangular loop

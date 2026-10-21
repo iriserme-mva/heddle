@@ -46,6 +46,16 @@ public:
     int process(const std::string& slotId, const float* in, float* out,
                 int channels, int frames);
 
+    // Push `frames` samples through the slot's plugin from EXPLICIT per-channel
+    // pointers (in[ch] / out[ch] each point at `frames` contiguous samples of
+    // channel ch). This is the form the in-block curve scheduler uses: the
+    // host's planar work buffers have channel-stride == full block size, so a
+    // sub-block read cannot use the flat `in + ch*frames` stride that process()
+    // assumes — the caller hands in the true per-channel pointers instead.
+    // Returns the number of frames processed, or -1 on error.
+    int processChannels(const std::string& slotId, const float* const* in,
+                        float* const* out, int channels, int frames);
+
     // Re-prepare every loaded slot for the given offline process spec. loadSlot
     // prepares instances at a default rate (44100/512) so they exist before the
     // renderer knows the input file's sample rate; the renderer calls this once

@@ -29,6 +29,12 @@ struct Curve {
     bool empty() const { return keyframes.empty(); }
     size_t size() const { return keyframes.size(); }
 
+    // True if any keyframe lies strictly after `frame` (the curve still
+    // moves). O(1): keyframes are sorted, so only the last one matters.
+    bool hasUpcoming(int64_t frame) const {
+        return !empty() && keyframes.back().first > frame;
+    }
+
     // Value at an absolute sample position.
     //   - Empty curve  -> 0.0
     //   - Single kf    -> that kf's value (constant)
@@ -53,6 +59,13 @@ struct ParamSpec {
     ParamSpec(float v) : value(v) {}  // static value, e.g. {{ "x", 0.5f }}
 
     bool isCurve() const { return !curve.empty(); }
+
+    // True if this param still moves after `frame`. Static params never do;
+    // curve params do while any keyframe lies ahead of the playhead. Used by
+    // the automation tick to skip params that have no upcoming value.
+    bool hasUpcoming(int64_t frame) const {
+        return isCurve() ? curve.hasUpcoming(frame) : false;
+    }
 
     // Value at an absolute sample position.
     float at(int64_t frame) const {

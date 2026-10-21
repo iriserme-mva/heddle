@@ -33,10 +33,15 @@ report as an artifact (`osc-perf-core-<os>`, `osc-perf-host-<os>`).
   set→ack latency floors at **~23.6 ms** (the drain wait + live VST3
   setParam + two UDP hops), and the practical sustainable control rate
   is **~1 000 sets/s**.
-- **Below the ceiling the control path is essentially free for audio**:
-  audio-throughput deficit stays **< 2 %** up to 1 000 sets/s. The audio
-  pump `try-lock`s `chainLock_`; the OSC thread holds it only briefly
-  per `setParam`, so real-time processing is barely disturbed.
+- **Below the ceiling the control path is essentially free for audio** —
+  the param path is lock-free end to end (JUCE atomic cached values +
+  dispatcher queue), so the audio side never blocks or skips while a
+  client is firing sets. (An earlier revision of the host held a
+  `chainLock_` with a try-lock from the audio side; that design was
+  removed and the deficit column in the table is from that era. The
+  shape — flat and negligible below the ceiling, rising only in the
+  socket-overflow region — holds in the lock-free design; the OSC drain
+  cadence, not the param path, is what saturates at ~2 000+ sets/s.)
 - **Above the ceiling** (~2 000+ sets/s) the socket receive buffer
   overflows: UDP sets are lost, set→ack RTT degrades by orders of
   magnitude, and lock contention starts to cost audio (deficit rises to
@@ -150,9 +155,9 @@ The backlog is *not* the saturation signal — audio deficit and RTT are.
   the drain cadence, not by queuing.
 - **2 000 → 10 000 sets/s: saturation.** Loss jumps to 49–90 %, RTT
   median jumps ~30× (23.6 ms → ~0.75–1.36 s) as sets queue in the socket
-  buffer ahead of the next drain, and audio deficit climbs (1.8 % → 19.3
-  %) as the OSC thread holds `chainLock_` longer, starving the pump's
-  `try-lock`. This region is beyond any realistic control rate and is
+  buffer ahead of the next drain, and the measured audio deficit climbs
+  (1.8 % → 19.3 %) as the message thread's tick fills with drain + apply
+  work. This region is beyond any realistic control rate and is
   shown to bound the design, not to target it.
 
 ---
@@ -207,16 +212,19 @@ set by the host's drain design, far above realistic control rates.
 
 ### Audio throughput deficit — the "smoothness of continuous adjustment" signal
 
-The audio pump takes `chainLock_` with a **non-blocking try-lock**; the
-OSC thread takes it **blocking** around each `setParam`. So while a
-client is firing sets, the pump's try-lock occasionally fails and it
-skips a block (outputs silence for that block). The deficit column is
-the measured cost:
+In the current (lock-free) design the audio side never blocks on the
+param path, so this column from the table above reflects the earlier
+`chainLock_` host. The saturation mechanism that still applies today is
+the OSC drain: at ~2 000+ sets/s the socket receive buffer overflows and
+the message thread spends its whole 5 ms tick draining and applying sets,
+which is where the measured deficit (1.8 % → 19.3 % across 2 k→10 k
+sets/s) comes from. The conclusion is unchanged:
 
 - **< 2 % up to 1 000 sets/s** — continuous adjustment is effectively
   free for real-time audio.
 - Rises to **~19 % at 10 000 sets/s** — at extreme flooding rates the
-  pump is starved. No realistic controller operates there.
+  message thread is starved of everything but the socket. No realistic
+  controller operates there.
 
 This is exactly the "how much real-time audio processing is sacrificed
 while turning a knob" question from the use-case review: the answer is
@@ -232,6 +240,87 @@ against the same baseline) but means `blk/s` is not a wall-clock
 real-time guarantee — in a real DAW the pump is driven by the DAW's
 audio thread at exact real-time rate. The deficit *percentage* is the
 meaningful, platform-independent number.
+
+---
+
+## In-block curve scheduling — `heddle-osc-ramp-test`
+
+A separate question from the set-rate ceiling above: **how faithfully does a
+live param curve render** when waypoints arrive over OSC at various rates?
+`heddle-osc-ramp-test` (host) measures it end to end: a running
+`heddle-host` (in-block mode) + live smoke VST3, 40 960-sample linear gain
+ramp (0.05 → 1.00) delivered as paced real-time OSC sets at a controlled
+**sets-per-block (ppb)** rate, 81+ waypoints per run. The output is
+line-fitted over the ramp region; `max_err` is the largest absolute
+deviation (normalized gain units, full-scale 1.0) and R² measures ramp
+shape integrity.
+
+### Headline — the critical rate is 1 set per block
+
+The binding requirement for a block-size-B curve is **at least one
+waypoint per block** (B samples apart at 48 kHz = 48000/B sets/s). Below
+that, blocks with no waypoint hold flat and the staircase deviates from
+the true chord; at and above it, error is a flat floor set by two
+quantizations, not by scheduling:
+
+| block | ppb | max_err (full scale) | R² | | block | ppb | max_err | R² |
+|---:|---:|---:|---:|---|---:|---:|---:|---:|
+| 128 | 0.1 | 0.0248 | 0.9988 | | 256 | 1.0 | 0.0105 | ≥ 0.9994 |
+| 256 | 0.1 | 0.0403 | 0.9957 | | 256 | 10 | 0.0106 | ≥ 0.9994 |
+| 512 | 0.1 | 0.0714 | 0.9809 | | 512 | 40 | 0.0096 | ≥ 0.9994 |
+| 128 | 1.0 | 0.0126 | ≥ 0.9994 | | 1024 | 10 | 0.0140 | ≥ 0.9994 |
+
+(18 configs, blocks 128–2048 × ppb 0.1/1/10/40; the two missing ultra-sparse
+cells — 1024/2048 at ppb 0.1 — are skipped by the `nSends ≥ 8` guard.)
+
+- **Below 1 set/block** the error scales with the gap: 2.5 % (128) →
+  7.1 % (512) at ppb 0.1 — the classic underrun.
+- **At/above 1 set/block** the error is a **flat 0.8–1.6 % floor,
+  independent of rate**: R² ≥ 0.9994 everywhere. The floor is waypoint
+  *pacing* (a set stamped at the block the audio thread hasn't started
+  yet, 2-block lookahead) plus block-boundary offset quantization — a
+  staircase artifact of discrete blocks, not a dropped or delayed
+  command.
+- **No samples lost, no sets dropped at any rate**: all 21 320 waypoints
+  acked and all drained (the 512-deep SPSC ring per param absorbs bursts;
+  paced sends are the controller's responsibility).
+
+A dump-level check (per-sample output vs the true chord) confirms the
+render is a genuine sample-accurate sub-block staircase (flat-run length =
+substep, jump = slope × substep) — the measured "deviation" at high ppb is
+a global line-fit reference artifact, not a block-resolution defect.
+
+### Dynamic automation cadence
+
+The host's **legacy** (per-block curve) automation tick is therefore
+dynamic: it runs at **2 × sampleRate / blockSize Hz** (2 ticks per block —
+double the 1/block critical rate, constant headroom at every block size:
+750 Hz @128, 187.5 @256, 93.75 @512, 46.9 @1024), computed as a period and
+gated inside the constant 5 ms OSC timer so it never slows OSC polling,
+and re-scaled when the audio device reports its real block size. It
+pushes **only params whose curve still has an upcoming keyframe**
+(`hasUpcoming`) — static params and finished curves cost nothing, so the
+work scales with the number of curves in motion, not the plugin's
+parameter count (real plugins expose hundreds of controls).
+
+### Harness
+
+- Target: `heddle-osc-ramp-test`, links `heddle_core` only — it *spawns*
+  the child `heddle-host`.
+- Source: `host/src/osc_ramp_test.cpp`.
+- Usage:
+  ```
+  heddle-osc-ramp-test <heddle-host> <smoke-vst3> \
+      [--blocks 128,256,512,1024,2048] [--ppb 0.1,1,10,40] \
+      [--substep 4] [--settle 1200] [--legacy]
+  ```
+  `--legacy` runs the same harness against a `--no-inblock` host
+  (immediate-latch, no in-block curve) for the A/B comparison.
+  `HEDDLE_RAMP_DUMP=<dir>` writes per-config per-sample windows
+  (`ramp_<block>_<ppb*10>.txt`) for offline analysis.
+- Emits a human table plus a
+  `@@HEDDLE_OSC_RAMP@@ … @@END@@` machine block.
+- Exit 0 = every requested (block, ppb) config completed.
 
 ---
 

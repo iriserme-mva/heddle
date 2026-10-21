@@ -82,10 +82,12 @@
 //
 // An OSC set marks the param "user-locked": curve automation stops
 // touching it until /chain/<slot>/reset or a hot-apply. Curve automation
-// itself is evaluated on the message-thread 5 ms timer (200 Hz), not in
-// the audio callback — at 48 kHz a 1024-frame block is 21 ms, so
-// per-block evaluation was only 47 Hz anyway; 200 Hz is strictly finer
-// and keeps the audio callback a pure DSP consumer.
+// itself is evaluated on the message-thread timer, not in the audio
+// callback: the interval is dynamic at 2*sampleRate/blockSize Hz (2 ticks
+// per block, 5 ms floor to protect the OSC poll), and a param is only ever
+// pushed while its curve still has an upcoming keyframe. This keeps the
+// audio callback a pure DSP consumer and keeps hundreds of plugin controls
+// essentially free.
 //
 // Headless pattern: plain main() + juce::initialiseJuce_GUI() — the same
 // shape heddle_smoke / heddle-render already build with in CI (no
@@ -123,6 +125,7 @@
 #include <juce_core/juce_core.h>
 
 #include "JuceBackend.hpp"
+#include "InBlockCurve.hpp"
 #include "heddle/chain.hpp"
 #include "heddle/config.hpp"
 #include "heddle/osc.hpp"
@@ -322,10 +325,19 @@ public:
             logErr("config has no slots");
             return 1;
         }
+        // In-block curve scheduling mode (message-thread-only writes, before
+        // the audio thread starts, so no synchronisation is needed).
+        curveSubstep_ = args_.substep;
+        inblock_ = args_.inblock;
         if (!chain.load(cfg_, &err)) {
             logErr("chain load failed: " + err);
             return 1;
         }
+        // Build the in-block curve scheduler's fixed-size entry table (one per
+        // enabled slot's param) from the now-loaded chain. Message thread,
+        // before the audio side starts, so the vector's layout is stable for
+        // the audio thread's later lock-free iteration.
+        if (inblock_) initCurveSlots();
         buildAutomationTables();
         // Plugin-internal changes (detected by refreshModel()) are pushed to
         // the last OSC peer as /change/<slot>/<param>.
@@ -396,6 +408,7 @@ public:
                                          : ""));
 
         startTimer(5);  // 5 ms OSC poll from the message thread
+        updateAutomationPeriod();  // scale automation cadence to the block size
 
         const int64_t startMs = juce::Time::getMillisecondCounter();
         const int64_t endMs =
@@ -523,6 +536,7 @@ public:
         running_ = true;
         logInfo("audio device started (" + std::to_string((int)devRate_) + " Hz, " +
                 std::to_string(devBlock_) + "-sample blocks)");
+        updateAutomationPeriod();  // the device's real block size wins
     }
 
     void audioDeviceStopped() override {
@@ -544,7 +558,16 @@ public:
             lastSrc_ = src;
             handleOsc(msg, src);
         }
-        curveAutomationTick();
+        // Curve automation at its dynamic period (2x per audio block, 5 ms
+        // floor): gated inside the constant 5 ms OSC timer so a long block
+        // period never slows OSC polling.
+        const int64_t nowMs = juce::Time::getMillisecondCounter();
+        if (lastAutoMs_ == 0) {
+            lastAutoMs_ = nowMs;
+        } else if (nowMs - lastAutoMs_ >= automationPeriodMs_) {
+            lastAutoMs_ = nowMs;
+            curveAutomationTick();
+        }
         refreshModel();
         guiPull();
     }
@@ -572,6 +595,8 @@ private:
         bool printVersion = false;
         double durationSec = 0.0;
         bool gui = false;           // --gui: open the param-control window
+        bool inblock = true;        // --no-inblock: legacy immediate latch
+        int substep = 4;            // --substep: in-block curve segment size
     };
 
     bool parseArgs(int argc, char** argv) {
@@ -608,6 +633,18 @@ private:
                 args_.durationSec = std::atof(v);
             } else if (a == "--gui") {
                 args_.gui = true;
+            } else if (a == "--no-inblock") {
+                // Legacy behaviour: an OSC set latches the plugin immediately
+                // (one value per set, no in-block curve). Used as the
+                // baseline in the rate sweep so the curve's benefit is
+                // measurable.
+                args_.inblock = false;
+            } else if (a == "--substep") {
+                const char* v = need("--substep");
+                if (v == nullptr) return false;
+                const int s = std::atoi(v);
+                if (s < 1) { logErr("--substep must be >= 1"); return false; }
+                args_.substep = s;
             } else if (a == "--help" || a == "-h") {
                 usage(argv[0]);
                 args_.printVersion = true;  // handled in run(): exit 0
@@ -644,13 +681,18 @@ private:
     static void usage(const char* prog) {
         std::fprintf(stderr,
             "usage: %s <chain.json> [--audio null|system|ring] [--device NAME]\n"
-            "       [--ring PREFIX] [--osc-port N] [--duration SECONDS] [--gui] [--version]\n"
+            "       [--ring PREFIX] [--osc-port N] [--duration SECONDS] [--gui]\n"
+            "       [--no-inblock] [--substep N] [--version]\n"
             "  Live VST3 chain host (JUCE). OSC control over UDP; the config's\n"
             "  osc.port/bind_host are the defaults, --osc-port overrides the port.\n"
             "  --audio ring serves the HeddleBridge VST3 over the shared-memory rings\n"
             "  PREFIX.in / PREFIX.out (default heddle.bridge.in / heddle.bridge.out).\n"
             "  --gui opens a window with per-slot param sliders (default off,\n"
-            "  headless).\n",
+            "  headless).\n"
+            "  In-block curve scheduling is ON by default: every OSC set is a\n"
+            "  sample-accurate waypoint (2-block lookahead, sub-block staircase).\n"
+            "  --no-inblock restores the legacy immediate-latch behavior; --substep\n"
+            "  N sets the in-block segment size in samples (default 4).\n",
             prog);
     }
 
@@ -689,11 +731,12 @@ private:
     }
 
     // ---- per-block processing (audio thread; no locks) ----------------------
-    // Pure DSP consumer: no param evaluation, no model reads beyond the
-    // slot list (concurrent-read safe; see threading model at top of file).
-    // Param values are latched by the plugins themselves via VST3
-    // IParameterChanges (JUCE drains the atomic cached-value queue inside
-    // each process()), so continuous adjustment never touches this path.
+    // Pure DSP consumer. Param values are normally latched by the plugins
+    // themselves via VST3 IParameterChanges (JUCE drains the atomic cached-value
+    // queue inside each process()). In in-block mode, instead, the host pushes a
+    // chord value for every active param at the start of each sub-block and runs
+    // that sub-block, so a block becomes a fine staircase converging on the true
+    // in-block curve (see the curve scheduler below).
     void runBlock(const float* const* inData, int numIns, int frames) {
         const int width = std::max(2, backend_.busWidth());
         if ((int)workIn_.getNumChannels() < width || workIn_.getNumSamples() < frames) {
@@ -714,40 +757,106 @@ private:
                     std::memcpy(workIn_.getWritePointer(c), inData[c],
                                 static_cast<size_t>(frames) * sizeof(float));
 
-        // Ping-pong the enabled slots (same idiom as render.cpp).
-        juce::AudioBuffer<float>* cur = &workIn_;
-        for (const auto& sc : cfg_.slots) {
-            if (!sc.enabled) continue;
-            juce::AudioBuffer<float>* next = (cur == &workA_) ? &workB_ : &workA_;
-            const int processed =
-                backend_.process(sc.id, cur->getWritePointer(0, 0),
-                                 next->getWritePointer(0, 0), width, frames);
-            if (processed != frames) {
-                logErr("slot '" + sc.id + "' failed to process " + std::to_string(frames) +
-                       " frames (got " + std::to_string(processed) + ")");
-                cur = nullptr;
-                break;
+        // In-block curve scheduling: drain the waypoint rings for THIS block and
+        // rebuild the per-slot working set. runBlock is the sole audio entry
+        // point, so no lock. With no active curve, slotsCurve_ is empty and we
+        // take the fast single-pass path (identical to the legacy behaviour).
+        const uint32_t curBlock = audioBlock_.fetch_add(1, std::memory_order_relaxed);
+        if (inblock_) prepareCurvesForBlock(curBlock);
+        const bool haveCurve = !slotsCurve_.empty();
+
+        const uint32_t S = static_cast<uint32_t>(frames);
+        // Fast path: no curve active -> one process() per slot, full block.
+        if (!haveCurve) {
+            juce::AudioBuffer<float>* cur = &workIn_;
+            for (const auto& sc : cfg_.slots) {
+                if (!sc.enabled) continue;
+                juce::AudioBuffer<float>* next = (cur == &workA_) ? &workB_ : &workA_;
+                const int processed =
+                    backend_.process(sc.id, cur->getWritePointer(0, 0),
+                                     next->getWritePointer(0, 0), width, frames);
+                if (processed != frames) {
+                    logErr("slot '" + sc.id + "' failed to process " + std::to_string(frames) +
+                           " frames (got " + std::to_string(processed) + ")");
+                    cur = nullptr;
+                    break;
+                }
+                cur = next;
             }
-            cur = next;
+            if (cur != nullptr) {
+                const int n = std::min(workOut_.getNumChannels(), cur->getNumChannels());
+                for (int c = 0; c < n; ++c)
+                    workOut_.copyFrom(c, 0, *cur, c, 0, frames);
+            }
+            chainFrame_.fetch_add(frames, std::memory_order_relaxed);
+            return;
         }
-        if (cur != nullptr) {
-            // Per-channel copy: JUCE's 6-arg copyFrom(dstCh, dstStart, src,
-            // srcCh, srcStart, n) is SINGLE-channel — a "copy whole buffer"
-            // overload does not exist. Channel 0 alone would silently drop
-            // every other channel (workOut_ ch1+ stays cleared).
+
+        // Curve path: segment the block into sub-blocks of `seg` samples. At each
+        // sub-block, push every active param for each enabled slot at the chord
+        // value for its first sample, then run the slot ping-pong for that slice
+        // via processChannels (explicit per-channel pointers at offset `done`,
+        // since the work buffers' channel stride is the full block, not `seg`).
+        const uint32_t seg =
+            std::max<uint32_t>(1, static_cast<uint32_t>(std::max(1, curveSubstep_)));
+        std::vector<const float*> inPtrs(width, nullptr);
+        std::vector<float*> outPtrs(width, nullptr);
+        uint32_t done = 0;
+        while (done < S) {
+            const uint32_t n = std::min(seg, S - done);
+            // Push the chord for this sub-block before processing it.
+            for (int s = 0; s < (int)cfg_.slots.size(); ++s)
+                if (cfg_.slots[s].enabled)
+                    pushCurveAtSlot(s, curBlock, S, done);
+            // Ping-pong this slice.
+            juce::AudioBuffer<float>* cur = &workIn_;
+            for (const auto& sc : cfg_.slots) {
+                if (!sc.enabled) continue;
+                juce::AudioBuffer<float>* next = (cur == &workA_) ? &workB_ : &workA_;
+                for (int c = 0; c < width; ++c) {
+                    inPtrs[c] = cur->getWritePointer(c);   // + done below
+                    outPtrs[c] = next->getWritePointer(c);
+                }
+                for (int c = 0; c < width; ++c) inPtrs[c] += done;
+                for (int c = 0; c < width; ++c) outPtrs[c] += done;
+                const int processed =
+                    backend_.processChannels(sc.id, inPtrs.data(), outPtrs.data(),
+                                             width, static_cast<int>(n));
+                if (processed != static_cast<int>(n)) {
+                    logErr("slot '" + sc.id + "' failed to process sub-block of " +
+                           std::to_string(n) + " frames (got " + std::to_string(processed) + ")");
+                    return;  // abort the block; caller treats it as done
+                }
+                cur = next;
+            }
+            done += n;
+        }
+        // Output: after the last segment, `cur` holds the fully-rendered block
+        // (each segment wrote its disjoint slice). Copy all of it to workOut_.
+        {
+            juce::AudioBuffer<float>* cur = &workIn_;
+            for (const auto& sc : cfg_.slots)
+                if (sc.enabled) cur = (cur == &workA_) ? &workB_ : &workA_;
             const int n = std::min(workOut_.getNumChannels(), cur->getNumChannels());
             for (int c = 0; c < n; ++c)
                 workOut_.copyFrom(c, 0, *cur, c, 0, frames);
         }
-
         chainFrame_.fetch_add(frames, std::memory_order_relaxed);
     }
 
-    // ---- curve automation (message thread, 5 ms timer; 200 Hz) --------------
+    // ---- curve automation (message thread, dynamic timer) -------------------
     // Moved out of the audio callback: it only touches the chain model, the
-    // user-lock map, and backend_ param pushes (all JUCE thread-safe). At
-    // 48 kHz / 1024-frame blocks the old per-block evaluation ran at ~47
-    // Hz; 200 Hz is strictly finer and the callback stays pure DSP.
+    // user-lock map, and backend_ param pushes (all JUCE thread-safe). The
+    // timer runs at 2 ticks per audio block (2*sampleRate/blockSize Hz,
+    // floored at 5 ms to protect the OSC poll): one tick per block is the
+    // minimum rate at which the plugin keeps up with a block-changing curve,
+    // two gives margin, and at 48 kHz / 1024 that is ~94 Hz.
+    //
+    // Push discipline (plugins expose hundreds of controls): a param is
+    // only pushed while its curve still has an UPKOMING keyframe. Static
+    // params and finished curves cost exactly nothing; the work scales with
+    // the number of curves currently in motion, not the plugin's parameter
+    // count.
     void curveAutomationTick() {
         const int64_t frame = chainFrame_.load(std::memory_order_relaxed);
         for (const auto& kv : curveTables_) {
@@ -759,6 +868,19 @@ private:
             for (const auto& name : kv.second) {
                 const ParamSpec* spec = sc.paramSpec(name);
                 if (spec == nullptr) continue;
+                // No keyframe after the playhead: the curve is finished, the
+                // plugin already holds the last value, and nothing will move
+                // it again. Skip the push entirely (and the bookkeeping).
+                if (!spec->hasUpcoming(frame)) continue;
+                const Param* pp = chain.slot(slotIdx) ? chain.slot(slotIdx)->findByName(name) : nullptr;
+                // In in-block mode a param under an active in-block curve is
+                // owned by the audio staircase (pushed per sub-block); the tick
+                // must not race it. (In legacy mode isCurveActive is false.)
+                if (pp != nullptr && isCurveActive(slotIdx, pp->id)) {
+                    prevCurve_[std::make_pair(slotIdx, name)] =
+                        Param::clamp01(spec->at(frame));
+                    continue;
+                }
                 const float v = Param::clamp01(spec->at(frame));
                 const auto key = std::make_pair(slotIdx, name);
                 auto it = prevCurve_.find(key);
@@ -771,6 +893,28 @@ private:
             }
             if (!changed.empty())
                 backend_.setParams(sc.id, changed);
+        }
+    }
+
+    // Message thread: the automation cadence is 2 ticks per audio block at
+    // the current sample rate (period = blockSize / (2*sampleRate) seconds;
+    // 5 ms floor). It is computed as a PERIOD, not as the timer interval:
+    // the JUCE timer keeps polling OSC at a constant 5 ms and
+    // curveAutomationTick() is gated inside timerCallback() by this period,
+    // so a large block (long period) never slows the OSC poll, and a tiny
+    // block never starves it.
+    void updateAutomationPeriod() {
+        const double sr =
+            (devRate_ > 0.0) ? devRate_ :
+            (cfg_.sampleRate > 0 ? static_cast<double>(cfg_.sampleRate) : 48000.0);
+        const int blk =
+            (devBlock_ > 0) ? devBlock_ :
+            (cfg_.blockSize > 0 ? cfg_.blockSize : 512);
+        int periodMs = (int)std::lround(1000.0 * blk / (2.0 * sr));
+        if (periodMs < 5) periodMs = 5;
+        if (periodMs != automationPeriodMs_) {
+            automationPeriodMs_ = periodMs;
+            lastAutoMs_ = 0;  // re-arm the gate
         }
     }
 
@@ -803,6 +947,141 @@ private:
     void clearOverrides() {
         userLocked_.clear();
         prevCurve_.clear();
+    }
+
+    // True if (slotIdx, paramId) currently has an active in-block curve. Used
+    // by curveAutomationTick to defer to the audio staircase (which owns the
+    // plugin value) instead of racing it from the message-thread tick.
+    bool isCurveActive(int slotIdx, uint32_t paramId) const {
+        if (!inblock_) return false;
+        const auto it = curveIndex_.find(std::make_pair(slotIdx, paramId));
+        return it != curveIndex_.end() &&
+               curveSlots_[it->second].active.load(std::memory_order_acquire);
+    }
+
+    // ---- in-block curve scheduler -------------------------------------------
+    // Message thread: an OSC set is a WAYPOINT, not an immediate latch. Stamp
+    // it at the block the audio thread has NOT started yet (audioBlock_ + 2)
+    // and push it into the per-(slot,param) SPSC ring; the audio thread drains
+    // the ring at the start of each block and renders the block as a
+    // sample-accurate sub-block staircase. The model value is updated
+    // (no plugin latch) so /chain queries reflect the request; the plugin's
+    // live value is owned solely by the audio staircase.
+    //
+    // curveSlots_ is a fixed-size vector built once in initCurveSlots() (one
+    // entry per enabled slot's param). After init its size/pointer are stable,
+    // so the audio thread may iterate it while the message thread pushes
+    // waypoints. Each entry is single-owner: ring = SPSC (msg push / audio
+    // drain), window+carry = audio thread (seeded by the msg thread BEFORE the
+    // atomic active flag is published), active = atomic (msg sets / audio
+    // reads). No locks anywhere.
+    void initCurveSlots() {
+        curveSlots_.clear();
+        curveIndex_.clear();
+        for (int s = 0; s < (int)cfg_.slots.size(); ++s) {
+            if (!cfg_.slots[s].enabled) continue;
+            const ParamSet* ps = chain.slot(s);
+            if (ps == nullptr) continue;
+            for (const Param& p : ps->params) {
+                curveIndex_[std::make_pair(s, p.id)] = curveSlots_.size();
+                // emplace (in-place default construction): CurveEntry is
+                // non-movable (atomics), so push_back of a temporary won't
+                // compile; deque emplace constructs the node in place.
+                curveSlots_.emplace_back();
+                curveSlots_.back().slotIdx = s;
+                curveSlots_.back().paramId = p.id;
+            }
+        }
+    }
+
+    void scheduleCurveSet(int slotIdx, uint32_t paramId, float v01) {
+        if (slotIdx < 0 || slotIdx >= (int)cfg_.slots.size()) return;
+        const auto it = curveIndex_.find(std::make_pair(slotIdx, paramId));
+        if (it == curveIndex_.end()) return;
+        CurveEntry& e = curveSlots_[it->second];
+        const float v = Param::clamp01(v01);
+        const uint32_t curBlock = audioBlock_.load(std::memory_order_acquire);
+        if (!e.active.load(std::memory_order_relaxed)) {
+            // First set after (de)activation: anchor the curve at the plugin's
+            // current value (the model, which tracks the last pushed/requested
+            // value) stamped at the CURRENT block. Pushed through the ring --
+            // the message thread never writes the audio-owned window/carry, so
+            // there is no cross-thread write at all. Result: the value holds at
+            // "old" until the first scheduled waypoint and the first kLookahead
+            // blocks become a continuous approach ramp (no click at activation,
+            // and a late point still bends the curve, per the waypoint model).
+            const ParamSet* ps = chain.slot(slotIdx);
+            const Param* pp = (ps != nullptr) ? ps->find(paramId) : nullptr;
+            const float old = (pp != nullptr) ? pp->value : v;
+            e.ring.push(curBlock, old);
+            e.active.store(true, std::memory_order_release);
+        }
+        e.ring.push(curBlock + kLookahead, v);  // newest wins per block at drain
+        chain.setParamModelById(slotIdx, paramId, v);
+    }
+
+    void clearCurvesForSlot(int slotIdx) {
+        // Called with audio quiesced (handleReset / hot-apply), so deactivating
+        // entries here cannot race a concurrent drain.
+        for (auto& e : curveSlots_)
+            if (e.slotIdx == slotIdx)
+                e.active.store(false, std::memory_order_relaxed);
+    }
+
+    void clearAllCurves() {
+        for (auto& e : curveSlots_)
+            e.active.store(false, std::memory_order_relaxed);
+    }
+
+    // Audio thread (start of block `block`): drain every active curve's SPSC
+    // ring into its ordered waypoint window (arrival order is non-decreasing in
+    // block stamp, so append and compact same-block duplicates newest-wins),
+    // then keep only the last waypoint at/BEFORE the current block (the
+    // continuity anchor) plus all future waypoints -- everything older is dead
+    // weight for evalCurve, which uses the nearest-left waypoint only. This
+    // bounds the window to ~one ring of pending waypoints regardless of how
+    // long a curve has been running. Rebuilds the per-slot working list.
+    void prepareCurvesForBlock(uint32_t block) {
+        slotsCurve_.clear();
+        for (size_t i = 0; i < curveSlots_.size(); ++i) {
+            CurveEntry& e = curveSlots_[i];
+            if (!e.active.load(std::memory_order_acquire)) continue;
+            heddle_InBlockCurve::Wp buf[512];
+            const size_t n = e.ring.takeAll(buf, 512);
+            if (n > 0) {
+                auto& w = e.window;
+                w.reserve(w.size() + n);
+                for (size_t j = 0; j < n; ++j) {
+                    if (!w.empty() && w.back().block == buf[j].block)
+                        w.back().value = buf[j].value;   // newest wins
+                    else
+                        w.push_back(buf[j]);
+                }
+                // Drop everything older than the last completed waypoint.
+                size_t keepFrom = w.size();
+                for (size_t j = w.size(); j-- > 0;) {
+                    if (w[j].block <= block) { keepFrom = j; break; }
+                }
+                if (keepFrom > 0) w.erase(w.begin(), w.begin() + keepFrom);
+            }
+            slotsCurve_.push_back(
+                {e.slotIdx, {{e.paramId, i}}});
+        }
+    }
+
+    // Audio thread: push every active param of `slotIdx` to the plugin at the
+    // chord value for sub-block sample `p` (of `S`) within block `block`.
+    void pushCurveAtSlot(int slotIdx, uint32_t block, uint32_t S, uint32_t p) {
+        for (const auto& sc : slotsCurve_) {
+            if (sc.first != slotIdx) continue;
+            for (const auto& c : sc.second) {
+                CurveEntry& e = curveSlots_[c.idx];
+                const float v = heddle_InBlockCurve::chordAt(
+                    e.window.data(), e.window.size(), block, S, p, e.carry);
+                e.carry = v;                 // the plugin now latches v
+                backend_.setParam(cfg_.slots[slotIdx].id, c.paramId, v);
+            }
+        }
     }
 
     // ---- OSC (message thread; model state is message-thread-only) ------------
@@ -883,22 +1162,29 @@ private:
     }
 
     void handleSet(const osc_addr::ParamAction& a, const OscUdp::SourceAddr& src) {
-        // chain.setParam -> backend_.setParam (setValueNotifyingHost): JUCE
-        // thread-safe (atomic cached value + parameter dispatcher), so this
-        // races with nothing on the audio side.
-        const float v = (a.op == osc_addr::ParamAction::Op::SetByName)
-                            ? chain.setParam(a.slotToken, a.param, a.value)
-                            : chain.setParamById(a.slotToken, a.paramId, a.value);
+        // In in-block mode the set becomes a WAYPOINT (the audio staircase owns
+        // the plugin value); in legacy mode it latches immediately via
+        // chain.setParam -> backend_.setParam (JUCE atomic cached value).
         const int idx = chain.resolveSlot(a.slotToken);
         const ParamSet* ps = idx >= 0 ? chain.slot(idx) : nullptr;
-        if (v < 0.f || ps == nullptr) {
+        if (ps == nullptr) {
             reply("/reply/" + a.slotToken, "error: param not found", src);
             return;
         }
         const Param* p = (a.op == osc_addr::ParamAction::Op::SetByName)
                              ? ps->findByName(a.param)
                              : ps->find(a.paramId);
-        const std::string name = (p != nullptr) ? p->title : a.param;
+        if (p == nullptr) {
+            reply("/reply/" + a.slotToken, "error: param not found", src);
+            return;
+        }
+        const std::string name = p->title;
+        const float v = Param::clamp01(a.value);
+        if (inblock_) {
+            scheduleCurveSet(idx, p->id, v);
+        } else {
+            chain.setParamById(a.slotToken, p->id, v);
+        }
         // Manual control outranks curve automation for this param.
         userLocked_[std::make_pair(idx, name)] = true;
         // Float ack at /reply/<slotId>/<paramTitle> (the documented contract).
@@ -928,6 +1214,9 @@ private:
             it = (it->first.first == idx) ? userLocked_.erase(it) : ++it;
         for (auto it = prevCurve_.begin(); it != prevCurve_.end();)
             it = (it->first.first == idx) ? prevCurve_.erase(it) : ++it;
+        // Drop any active in-block curve for this slot (atomic flag only; the
+        // audio thread sees active=false on its next prepare and skips it).
+        clearCurvesForSlot(idx);
         reply("/status", "ok slot reset: " + sc.id, src);
     }
 
@@ -944,6 +1233,7 @@ private:
                 backend_.setParams(sc.id, vals);
         }
         clearOverrides();
+        clearAllCurves();
         reply("/status", "ok chain reset", src);
     }
 
@@ -973,6 +1263,10 @@ private:
         cfg_ = next;
         buildAutomationTables();
         clearOverrides();
+        // cfg_ just swapped (quiesced, audio not running): drop stale curves and
+        // rebuild the curve entry table against the new config's param surface.
+        clearAllCurves();
+        if (inblock_) initCurveSlots();
         reply("/status", "ok chain applied (" + std::to_string(next.slots.size()) + " slots)",
               src);
     }
@@ -1043,9 +1337,62 @@ private:
     int specBlock_ = 0;
     double devRate_ = 0.0;
     int devBlock_ = 0;
+    int automationPeriodMs_ = 5;   // dynamic: blockSize / (2*sampleRate), >= 5
+    int64_t lastAutoMs_ = 0;       // 0 = re-arm the automation gate
     // Atomic: audio thread increments per processed block; the message
     // thread reads it (status line, curve evaluation).
     std::atomic<int64_t> chainFrame_{0};
+    // Monotonic audio-block counter (audio thread increments once per
+    // processed block; message thread reads it to stamp OSC sets 2 blocks
+    // ahead). Distinct from chainFrame_ (which counts samples) because the
+    // in-block curve scheduler reasons in block units.
+    std::atomic<uint32_t> audioBlock_{0};
+
+    // ---- in-block OSC curve scheduler (VST3 IParamValueQueue model) --------
+    // A /chain/<slot>/<param> OSC set does NOT latch the plugin immediately;
+    // it is stamped at block = audioBlock_ + kLookahead and pushed into a
+    // per-(slot,param) SPSC ring. The audio thread drains the ring at the
+    // start of each block, rebuilds the ordered waypoint window, and renders
+    // the block as sub-block segments: at each segment boundary it pushes the
+    // chord value for that sample to the plugin (setParam), then processes the
+    // segment. This is what lets a single block carry a smooth in-block ramp
+    // even though a VST3 plugin latches one value per processBlock call.
+    // kLookahead = 2 keeps the current block (b) and next (b+1) committed
+    // while every block >= b+2 stays bendable by a late-arriving set.
+    static constexpr uint32_t kLookahead = 2;
+    struct CurveEntry {
+        int slotIdx = -1;                // immutable after init (audio reads)
+        uint32_t paramId = 0;            // immutable after init (audio reads)
+        heddle_InBlockCurve ring;        // SPSC waypoint ring (msg push / audio drain)
+        std::vector<heddle_InBlockCurve::Wp> window;  // audio-thread ordered window
+        float carry = 0.f;               // audio-thread carried value (hold)
+        std::atomic<bool> active{false}; // under curve control (msg sets / audio reads)
+    };
+    // Fixed-size, built once in initCurveSlots() after chain.load (message
+    // thread, audio not started). A deque (not a vector): CurveEntry contains
+    // atomics and is non-movable, and deque element addresses are stable across
+    // growth, so the audio thread's iteration stays valid. Each entry's fields
+    // are single-owner (ring = SPSC; window/carry = audio thread; active =
+    // atomic), so the audio thread may iterate while the message thread pushes
+    // waypoints with no lock and no race.
+    std::deque<CurveEntry> curveSlots_;
+    // (slotIdx, paramId) -> index into curveSlots_. Message-thread-ONLY
+    // (built at init, looked up in scheduleCurveSet) -- the audio thread never
+    // reads it, so it needs no synchronisation.
+    std::map<std::pair<int, uint32_t>, size_t> curveIndex_;
+    // Audio-thread working set for the current block, rebuilt each block from
+    // curveSlots_: slotIdx -> {paramId, index into curveSlots_} for every
+    // ACTIVE curve. Rebuilt at the start of every block (prepareCurvesForBlock)
+    // before any pushCurveAtSlot reads it. Index-based (not pointer-based) so a
+    // hot-apply that reallocates curveSlots_ cannot dangle a captured address.
+    struct SlotCurve { uint32_t paramId; size_t idx; };
+    std::vector<std::pair<int, std::vector<SlotCurve>>> slotsCurve_;  // audio-thread rebuilt
+    // Max sub-block (samples) the host splits a block into; smaller = a finer
+    // staircase that converges to the true chord. 4 @ 48k = 83 us.
+    int curveSubstep_ = 4;
+    // true = in-block curve scheduling (OSC sets become waypoints); false =
+    // legacy immediate latch (an OSC set pushes the plugin value at once).
+    bool inblock_ = true;
 
     // --audio ring: the two shared-memory rings (host owns both; the HeddleBridge
     // VST3 or the round-trip test attaches to them). ringIn_ = DAW -> host,
@@ -1393,10 +1740,20 @@ bool HeddleHost::hostGuiSet(int slotIndex, const std::string& name, double norm)
     if (slotIndex < 0 || slotIndex >= chain.numSlots())
         return false;
     const std::string token = cfg_.slots[slotIndex].id;
-    // Lock-free: same path as an OSC set (JUCE thread-safe param push).
-    const float v = chain.setParam(token, name, (float)norm);
-    if (v < 0.f)
+    const ParamSet* ps = chain.slot(slotIndex);
+    if (ps == nullptr)
         return false;
+    const Param* p = ps->findByName(name);
+    if (p == nullptr)
+        return false;
+    const float v = Param::clamp01((float)norm);
+    // In in-block mode the GUI set becomes a waypoint (the audio staircase owns
+    // the plugin value); otherwise latch immediately (JUCE thread-safe push).
+    if (inblock_) {
+        scheduleCurveSet(slotIndex, p->id, v);
+    } else {
+        chain.setParam(token, name, v);
+    }
     // Manual control (GUI or OSC) outranks curve automation for this param.
     userLocked_[std::make_pair(slotIndex, name)] = true;
     return true;

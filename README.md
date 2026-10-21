@@ -122,6 +122,83 @@ The VST3 plugin path in the config is resolved relative to the current
 working directory (absolute paths work too). See
 [docs/CONFIG.md](docs/CONFIG.md) for the full schema and [examples/chain.json](examples/chain.json).
 
+## Running the live host
+
+`heddle-host` is the real-time side: it loads the same JSON config, runs the
+plugin chain live, and exposes **every param over OSC** (UDP, default port
+9001) — set by name or id, query, reset, hot-apply a new config, and receive
+`/change/...` pushes. The full protocol is in [docs/OSC.md](docs/OSC.md).
+
+```powershell
+# live output (real audio device), OSC on :9001
+.\build-msvc\host\Release\heddle-host.exe examples\chain.json
+
+# headless (no audio device; software clock at the config's rate/block)
+.\build-msvc\host\Release\heddle-host.exe examples\chain.json --audio null
+
+# DAW-bridge mode: serve audio over the HeddleBridge VST3's shared-memory rings
+.\build-msvc\host\Release\heddle-host.exe examples\chain.json --audio ring
+
+# interactive slider window
+.\build-msvc\host\Release\heddle-host.exe examples\chain.json --gui
+```
+
+| Flag | Meaning |
+|---|---|
+| `--audio system\|null\|ring` | real device (default) / software clock / DAW bridge rings |
+| `--device NAME` | select the audio device |
+| `--ring PREFIX` | ring names `PREFIX.in`/`PREFIX.out` (default `heddle.bridge.*`) |
+| `--osc-port N` | override the OSC port (config `osc.port` is the default) |
+| `--duration SECONDS` | exit 0 after N seconds |
+| `--gui` | param-control slider window (off by default) |
+| `--no-inblock` | legacy immediate-latch param sets (default is in-block, below) |
+| `--substep N` | in-block curve segment size in samples (default 4) |
+
+### VST structure of a chain
+
+The config's `chain` array is the VST structure: an **ordered list of slots**,
+each slot = one loaded plugin (a VST3 bundle path + optional class id), wired
+in series — slot 0's output is slot 1's input, and so on. Inside a slot, the
+plugin's own param surface is discovered at load time: every param becomes
+addressable over OSC as `/chain/<slotId|index>/<paramName>` (set by name with
+one float, by id with `int, float`), and is also listed in the config's
+`params` block as its load-time value (static number or a curve object).
+`enabled: false` keeps the slot's address alive but passes audio through
+untouched. So a rig is fully described as: *which plugins, in what order,
+with what starting values* — the rest of the surface (every remaining
+param, all resets, hot-swaps) is reachable live over OSC or the `--gui`
+window. The offline render CLI and the live host share the exact same
+config, backend, and param model.
+
+### Live automation (in-block curve scheduling)
+
+In the default **in-block** mode every OSC set is a **waypoint**, not an
+immediate latch: it is stamped ~2 blocks ahead (the block the audio thread
+has not started yet — the DAW-equivalent of a parameter queue) and the audio
+thread renders the block as a **sample-accurate sub-block staircase** (default
+4 samples), interpolating between the paced waypoints. A burst of sets
+therefore becomes a smooth curve, and a late set still bends the curve that
+is still scheduled for the coming block. Each (slot, param) curve rides a
+lock-free SPSC ring (512 waypoints deep — a controller can safely burst), and
+only params under an *active* curve cost anything in the audio path.
+
+`--no-inblock` restores the legacy behavior (each set latches immediately,
+one value per set, no curve).
+
+**Rate to aim for:** the critical rate for a block size B at 48 kHz is
+**1 waypoint per block** (48000/B sets/s — 375/s @128, 94/s @512, 23/s
+@2048). Below it the curve underruns (a block with no waypoint holds flat:
+2.5–7.1 % deviation in the 0.1 set/block measurements); at and above it the
+error is a flat 0.8–1.6 % floor set by waypoint pacing + block-boundary
+quantization, independent of rate (R² ≥ 0.9994, 18-config sweep, 0 samples
+lost / 0 sets dropped). Full methodology + numbers:
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md) → *In-block curve scheduling*.
+The host's legacy per-block curve tick (config `curve:` keyframes) matches
+this dynamically: it runs at **2 × sampleRate / block size** (2 ticks per
+block, re-scaled when the device reports its real block size) and only ever
+pushes params whose curve still has an upcoming keyframe — a rig full of
+hundreds of static params costs nothing.
+
 ## Layout
 
 ```
@@ -138,6 +215,7 @@ heddle/
 │   ├── tests/             # targeted doctest suites
 │   └── tools/             # heddle_ring_latency, heddle_osc_perf benchmarks
 ├── host/                  # JUCE backend + heddle_smoke + heddle-render (opt-in)
+│   └── src/               # host_main.cpp (live host), osc_ramp_test.cpp, osc_perf_host.cpp, ...
 ├── docs/                  # CONFIG.md, OSC.md, ARCHITECTURE.md, ALIGNMENT.md, PERFORMANCE.md
 ├── examples/chain.json    # example rig config
 ├── assets/logo/           # banner, avatar, mark

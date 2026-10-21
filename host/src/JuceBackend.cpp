@@ -211,6 +211,21 @@ bool JuceBackend::setParam(const std::string& slotId, uint32_t id,
 
 int JuceBackend::process(const std::string& slotId, const float* in, float* out,
                          int channels, int frames) {
+    // Flat-pointer form (render.cpp, smoke CLI): the caller lays out one
+    // (width, frames) planar buffer and passes its channel 0 base pointer;
+    // per-channel stride is exactly `frames`, so this just adapts to
+    // per-channel pointers and delegates to processChannels().
+    const float* inPtrs[8];
+    float* outPtrs[8];
+    for (int ch = 0; ch < channels && ch < 8; ++ch) {
+        inPtrs[ch] = (in != nullptr) ? in + (size_t)ch * frames : nullptr;
+        outPtrs[ch] = (out != nullptr) ? out + (size_t)ch * frames : nullptr;
+    }
+    return processChannels(slotId, inPtrs, outPtrs, channels, frames);
+}
+
+int JuceBackend::processChannels(const std::string& slotId, const float* const* in,
+                                 float* const* out, int channels, int frames) {
     for (auto& slot : slots_) {
         if (slot.id != slotId || slot.instance == nullptr)
             continue;
@@ -219,20 +234,29 @@ int JuceBackend::process(const std::string& slotId, const float* in, float* out,
         const int inCh = std::max(1, inst.getTotalNumInputChannels());
         const int outCh = std::max(1, inst.getTotalNumOutputChannels());
         const int width = std::max(inCh, outCh);
-
+        // Per-channel pointer variant: one process() per sub-block slice.
+        // The caller supplies (possibly offset) channel pointers into the
+        // planar work buffers, so this copy only spans `frames` samples per
+        // channel -- the plugin sees exactly the slice being rendered.
         juce::AudioBuffer<float> buf(width, frames);
-        for (int ch = 0; ch < inCh; ++ch)
-            std::memcpy(buf.getWritePointer(ch), in + (size_t)ch * frames,
-                        (size_t)frames * sizeof(float));
-        for (int ch = inCh; ch < width; ++ch)
+        for (int ch = 0; ch < inCh && ch < channels; ++ch) {
+            if (in != nullptr && in[ch] != nullptr)
+                std::memcpy(buf.getWritePointer(ch), in[ch],
+                            (size_t)frames * sizeof(float));
+            else
+                buf.clear(ch, 0, frames);
+        }
+        for (int ch = std::max(inCh, channels); ch < width; ++ch)
             buf.clear(ch, 0, frames);
 
         juce::MidiBuffer midi;
         inst.processBlock(buf, midi);
 
-        for (int ch = 0; ch < outCh; ++ch)
-            std::memcpy(out + (size_t)ch * frames, buf.getReadPointer(ch),
-                        (size_t)frames * sizeof(float));
+        for (int ch = 0; ch < outCh && ch < channels; ++ch) {
+            if (out != nullptr && out[ch] != nullptr)
+                std::memcpy(out[ch], buf.getReadPointer(ch),
+                            (size_t)frames * sizeof(float));
+        }
         return frames;
     }
     return -1;
