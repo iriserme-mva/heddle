@@ -7,6 +7,32 @@ current after every session** — last section first.
 
 - ✅ done · 🔨 in progress · ⏸ blocked (state why) · 📅 planned
 
+## In-block OSC scheduling: sub-block timing + whole-queue raw path (2026-10-23)
+
+- ✅ **`a5a402a`** — OSC 3-float wire contract (`[value]` / `[value,delay]` /
+  `[value,delay,duration]`; duration≈0 = hard snap, −1 = host default ramp);
+  per-set curve anchors (`anchorPos = curBlock + delay`, `targetPos =
+  anchorPos + duration`), drain-time anchor re-resolution, stale-target
+  pruning; `buildQueuePts` kinks via `valAt(wp.block)` for sample-exact
+  continuity; `HeddleProbeAudio` raw standalone VST3 probe (linear-interp of
+  the full `IParamValueQueue` per SDK spec); `heddle-osc-twopt` harness with
+  `--usecase` (4-op scenario) + child-stderr capture; null-`FILE*` crash fix
+  (non-debug SEND log → 0xC0000409 fastfail).
+- ✅ **Use case verified sample-exact** (debug + non-debug, clean builds):
+  hard snap 1→0 (1 sample, no ramp) → ramp 0→1 over 2.5 blocks starting
+  +0.5 block later → hard snap →0; max fit err 5.6e-8; plot delivered.
+  Two-set regression: 0 jumps > 0.005 over 44032 samples, A/B aligned
+  bit-identical.
+- 🔨→✅ **CI red on `a5a402a`** (run 39893478776, all 3 host jobs): new
+  `windows-latest` image = **VS 2026 + MSVC 14.51** — `C2027`/`C2338`
+  "can't delete an incomplete type" on the inline `Slot` 3-arg ctor in
+  `JuceBackend.hpp` (unique_ptr<AudioPluginInstance> over a forward
+  declaration; MSVC 14.44 local was lenient). **`996707d`** = ctor moved
+  out-of-line (zero semantic change; local rebuild + use case + regression
+  re-verified before push).
+- ✅ **CI GREEN (run 39915922827, all 6 jobs)** for `996707d`.
+- 📅 **Next:** `heddle-proxy` tool (see v0.1.8 section).
+
 ## v0.1.8 release cut (2026-10-22) — code-only, 0 assets by design
 
 - ✅ **Release `v0.1.8`** cut from `3095977` (dynamic automation rate + `hasUpcoming`
