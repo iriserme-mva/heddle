@@ -28,6 +28,7 @@ set(HEDDLE_VST3_SDK_INCLUDE
 add_subdirectory(test_plugin)
 add_subdirectory(probe_plugin)
 add_subdirectory(heddle_bridge)
+add_subdirectory(proxy_plugin)
 
 # ---- smoke CLI -------------------------------------------------------------
 add_executable(heddle_smoke

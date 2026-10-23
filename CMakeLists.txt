@@ -19,6 +19,7 @@ add_library(heddle_core STATIC
     core/src/curve.cpp
     core/src/osc_io.cpp
     core/src/ring.cpp
+    core/src/proxy.cpp
 )
 set_target_properties(heddle_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(heddle_core PUBLIC
@@ -41,6 +42,7 @@ add_executable(heddle_core_tests
   core/tests/test_curve.cpp
   core/tests/test_osc_udp.cpp
   core/tests/test_ring.cpp
+  core/tests/test_proxy.cpp
 )
 target_link_libraries(heddle_core_tests PRIVATE heddle_core)
 target_include_directories(heddle_core_tests PRIVATE third_party/doctest)
@@ -59,6 +61,14 @@ target_link_libraries(heddle_ring_latency PRIVATE heddle_core)
 # job (no audio device / X server needed). See docs/PERFORMANCE.md.
 add_executable(heddle_osc_perf core/tools/osc_perf.cpp)
 target_link_libraries(heddle_osc_perf PRIVATE heddle_core)
+
+# ---- heddle-proxy (standalone OSC fan-out router) ---------------------------
+# Core-layer (JUCE-free): routes one OSC surface to up to 5 Heddle targets.
+# The passthrough VST3 form lives in host/ and reuses the same ProxyEngine.
+# See docs/PROXY.md.
+add_executable(heddle-proxy core/tools/proxy_main.cpp)
+target_link_libraries(heddle-proxy PRIVATE heddle_core)
+set_target_properties(heddle-proxy PROPERTIES OUTPUT_NAME heddle-proxy)
 
 # ---- JUCE host layer (opt-in) ----------------------------------------------
 option(HEDDLE_BUILD_HOST "Build the JUCE host layer (VST3 plugin + smoke CLI)" OFF)

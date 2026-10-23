@@ -93,11 +93,11 @@ jobs:
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: cmake --build build --config Release --target heddle_smoke heddle_smoke_plugin_VST3 heddle-render heddle-host heddle-bridge-test heddle-osc-perf-host heddle_bridge_plugin_VST3 --verbose
+        run: cmake --build build --config Release --target heddle_smoke heddle_smoke_plugin_VST3 heddle-render heddle-host heddle-bridge-test heddle-osc-perf-host heddle_bridge_plugin_VST3 heddle_proxy_plugin_VST3 --verbose
 
       - name: Build (Linux / macOS)
         if: runner.os != 'Windows'
-        run: cmake --build build --target heddle_smoke heddle_smoke_plugin_VST3 heddle-render heddle-host heddle-bridge-test heddle-osc-perf-host heddle_bridge_plugin_VST3 -v
+        run: cmake --build build --target heddle_smoke heddle_smoke_plugin_VST3 heddle-render heddle-host heddle-bridge-test heddle-osc-perf-host heddle_bridge_plugin_VST3 heddle_proxy_plugin_VST3 -v
 
       - name: Locate built VST3 plugin
         id: loc
