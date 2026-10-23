@@ -7,6 +7,32 @@ current after every session** — last section first.
 
 - ✅ done · 🔨 in progress · ⏸ blocked (state why) · 📅 planned
 
+## Proxy classify() reserved-word regression fix (2026-10-24)
+
+- ✅ **`classify()` fix follow-up** (`874ab94`) — the bare-`/chain/<slot>` →
+  `QueryAll` mapping (needed by the proxy's DISCOVER) was sweeping the
+  reserved host-control words `/chain/quit` and `/chain/status` out of the
+  `Unknown` branch that `host_main.cpp` uses to intercept them, so the host
+  never answered `/chain/quit` ("quitting" + clean exit) — CI run
+  `40031404372` failed all 3 OS **host** jobs at the bridge-test step
+  (`FAIL: no 'quitting' for /chain/quit`; the ring round-trip itself passed,
+  `out/in=0.5000`). Fix: the bare branch now returns the default `Unknown`
+  op for `quit`/`status` so the host extension branch intercepts them; real
+  slots still classify `QueryAll`. Regression test added.
+- ✅ **CI GREEN run `40034121595` (6/6 jobs, commit `874ab94`)** — host
+  ubuntu/windows/macos-15 + core ×3 all success. Local: core
+  `heddle_core_tests` **66/66 cases, 1748/1748 assertions** (was 65/65 after
+  the proxy classify commit; the 2 reserved-word cases are new).
+- ✅ **Deliverables sent to Miha's DM (2026-10-24):** `heddle-postchange-verify.png`
+  (errors vs block size), `heddle-inblock-osc-curve.png` (OSC rate / curve
+  scheduling), `heddle-proxy-discovered.png` (real `HeddleProxy` editor vs a
+  live `heddle-host` on 127.0.0.1:9013 — 3 discovered slots Gain/PWM pct/
+  Bypass, target, route /gain→t0→Gain, MODE/APPLY/DISCOVER; 1560×1200
+  editor-level 2× snapshot, `send_tg_direct.py --chat 1975747592`, 3/3 with
+  file_ids). Note: an earlier same-day "sent" claim had no gateway-log backing
+  and the script's default target is the Home channel, not the DM — the
+  verified re-send above is the one that landed.
+
 ## heddle-proxy: one OSC surface → up to 5 Heddle targets (2026-10-23)
 
 - ✅ **`heddle-proxy`** — new JUCE-free core engine (`core/src/proxy.cpp` +
