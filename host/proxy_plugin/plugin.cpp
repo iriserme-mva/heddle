@@ -170,6 +170,13 @@ public:
                          jstr(e.p.slot) + "/" +
                          jstr(e.p.param) +
                          "   (id " + juce::String(e.p.paramId) + ")");
+        // The ListBox RowComponent does not set a text colour before calling
+        // us, so drawText would use Graphics' default (black) — invisible on
+        // the dark list background. Pick a colour from the list's background.
+        const juce::Colour bg = (list_ != nullptr)
+            ? list_->findColour(juce::ListBox::backgroundColourId)
+            : juce::Colours::black;
+        g.setColour(bg.getBrightness() < 0.5f ? juce::Colours::white : juce::Colours::black);
         g.setFont(height * 0.68f);
         g.drawText(text, 4, 2, 2000, height, juce::Justification::left);
     }
@@ -179,17 +186,19 @@ public:
         if (row < 0 || row >= (int) entries_.size() || !insert_) return;
         insert_(entries_[row].targetIdx, entries_[row].p);
     }
-    // JUCE 8.0.4 ListBoxModel has no begin/endUpdate/updateAllRows — repaint
-    // the owning list instead.
+    // JUCE 8.0.4 ListBoxModel has no begin/endUpdate; repaint() alone does NOT
+    // refresh the ListBox's cached row count, so use updateContent().
     void refresh(const std::vector<Entry>& e, juce::ListBox* list) {
+        list_ = list;
         entries_ = e;
-        if (list != nullptr) list->repaint();
+        if (list != nullptr) list->updateContent();
     }
     void setInsertCallback(InsertCb cb) { insert_ = std::move(cb); }
 
 private:
     std::vector<Entry> entries_;
     InsertCb insert_;
+    juce::ListBox* list_ = nullptr;
 };
 
 // ===========================================================================
@@ -202,7 +211,7 @@ public:
         : juce::AudioProcessorEditor(owner), owner_(owner) {
         setSize(780, 600);
 
-        title_ = new juce::Label("t", "Heddle Proxy — OSC fan-out");
+        title_ = new juce::Label("t", "Heddle Proxy - OSC fan-out");
         title_->setFont(juce::FontOptions(15.0f, juce::Font::bold));
         title_->setColour(juce::Label::textColourId, juce::Colours::white);
         addAndMakeVisible(title_);
@@ -246,6 +255,7 @@ public:
         // Poll the live counters + status.
         startTimerHz(4);
         refreshStatus();
+        resized();  // layout now that all children exist (first setSize skipped it)
     }
 
     ~ProxyEditor() override = default;
@@ -253,6 +263,12 @@ public:
     void timerCallback() override { refreshStatus(); }
 
     void resized() override {
+        // Guard: the ctor's first setSize() fires resized() before the child
+        // pointers below exist (headless hosts never opened the editor, so this
+        // stayed latent).
+        if (title_ == nullptr || targetsHdr_ == nullptr ||
+            routesHdr_ == nullptr || discLbl_ == nullptr)
+            return;
         const int W = getWidth();
         title_->setBounds(12, 8, W - 12, 20);
         status_->setBounds(W - 320, 10, 308, 18);
@@ -436,7 +452,7 @@ private:
                 status_->setText("discover: pick a valid target (set ip+port)", juce::dontSendNotification);
                 return;
             }
-            status_->setText("discovering " + jstr(owner_.cfg_.targets[ti].ip) + "…",
+            status_->setText("discovering " + jstr(owner_.cfg_.targets[ti].ip) + juce::String(juce::CharPointer_UTF8("\xE2\x80\xA6")),
                              juce::dontSendNotification);
             // Run on the message thread (this is already it); a short block is
             // acceptable for a manual button press.
@@ -474,7 +490,7 @@ private:
                     routeTgt_[i]->setSelectedId(ti + 1, juce::dontSendNotification);
                     routeSlot_[i]->setText(jstr(p.slot));
                     routeParam_[i]->setText(jstr(p.param));
-                    status_->setText("route added — press APPLY", juce::dontSendNotification);
+                    status_->setText("route added - press APPLY", juce::dontSendNotification);
                     break;
                 }
             }

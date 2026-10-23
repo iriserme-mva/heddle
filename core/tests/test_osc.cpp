@@ -168,6 +168,19 @@ TEST_CASE("classifies reset slot") {
     CHECK(a.slotToken == "fx2");
 }
 
+TEST_CASE("classifies bare /chain/<slot> as a slot param query") {
+    // The proxy's DISCOVER issues a bare /chain/<slot> (no args) after
+    // /chain/query to enumerate a slot's params — it must classify as
+    // QueryAll with the slot token (regression: it used to be Unknown).
+    auto a = osc_addr::classify(OscMsg::make("/chain/smoke"));
+    CHECK(a.op == ParamAction::Op::QueryAll);
+    CHECK(a.slotToken == "smoke");
+    CHECK(a.param.empty());
+    auto b = osc_addr::classify(OscMsg::make("/chain/0"));
+    CHECK(b.op == ParamAction::Op::QueryAll);
+    CHECK(b.slotToken == "0");
+}
+
 TEST_CASE("classifies apply path and config blob") {
     auto p = osc_addr::classify(OscMsg::make("/chain/apply", std::string("/tmp/c.json")));
     CHECK(p.op == ParamAction::Op::ApplyPath);

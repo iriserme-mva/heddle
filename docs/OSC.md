@@ -13,6 +13,7 @@ sends replies to the client's source address.
 | Address | Args | Meaning |
 |---|---|---|
 | `/chain/query` | (none) | list slots → reply `/reply/chain` |
+| `/chain/<slot>` | (none) | **query all params of the slot** → one `/reply/<slotId>/<paramTitle>` string line per param |
 | `/chain/<slot>/<param>` | `f` value | **set param by name** (value normalized 0..1) |
 | `/chain/<slot>/<param>` | `i` id, `f` value | **set param by id** (first arg is the param id) |
 | `/chain/<slot>/reset` | (none) | reset that slot's params to plugin defaults |
@@ -28,7 +29,9 @@ or the numeric index as a string (e.g. `0`). Resolution is done by `Chain`.
 **Disambiguation of set-by-name vs set-by-id:** with one float argument the
 message sets by *param name*; with `int, float` it sets by *param id*.
 A bare `/chain/<slot>/<param>` with *no* arguments **queries** all params of
-the slot (one string reply per param).
+the slot (one string reply per param). A bare `/chain/<slot>` (slot token, no
+param, no args) is the same slot query — the form the proxy's DISCOVER issues
+after `/chain/query`.
 
 ### Replies (host → client)
 

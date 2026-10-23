@@ -196,7 +196,10 @@ ParamAction classify(const OscMsg& msg) {
     std::string slotTok = token(rest, i);
     if (slotTok.empty()) return a;
     a.slotToken = slotTok;
-    if (rest.size() == slotTok.size()) return a;  // no more parts
+    // Bare /chain/<slot> (no args) = "list all params of this slot" (the
+    // QueryAll surface; see the addressing scheme in heddle/osc.hpp — the
+    // proxy's DISCOVER issues exactly this after /chain/query).
+    if (rest.size() == slotTok.size()) { a.op = ParamAction::Op::QueryAll; return a; }
     if (rest[i] != '/') return a;
     i++;
     std::string second = token(rest, i);

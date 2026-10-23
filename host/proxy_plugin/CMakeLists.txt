@@ -32,5 +32,10 @@ target_link_libraries(heddle_proxy_plugin PRIVATE
 # Editor uses juce_gui_basics components (Button/Label/TextEditor/ListBox).
 target_compile_definitions(heddle_proxy_plugin PRIVATE JUCE_WEB_BROWSER=0)
 target_compile_definitions(heddle_proxy_plugin PRIVATE JUCE_USE_CURL=0)
+if(MSVC)
+    # plugin.cpp contains UTF-8 literals (em dashes) — compile as UTF-8 so
+    # wide-string conversion does not mangle them.
+    target_compile_options(heddle_proxy_plugin PRIVATE /utf-8)
+endif()
 
 juce_generate_juce_header(heddle_proxy_plugin)
