@@ -148,9 +148,15 @@ private:
         // declares it (to keep including JuceBackend.hpp cheap for the CLIs).
         void releaseRaw();
         Slot() = default;
+        // Defined in JuceBackend.cpp: the body instantiates the
+        // unique_ptr<juce::AudioPluginInstance> member, which needs the
+        // COMPLETE JUCE type (forward-declared only in this header). An
+        // inline definition gets instantiated in every including TU
+        // (smoke.cpp / host_main.cpp / render.cpp) — MSVC 14.51 (CI's
+        // VS 2026 image) hard-errors with C2027/C2338 "can't delete an
+        // incomplete type" there, where older MSVC was lenient.
         Slot(const std::string& i, const std::string& p,
-             std::unique_ptr<juce::AudioPluginInstance> inst)
-            : id(i), path(p), instance(std::move(inst)) {}
+             std::unique_ptr<juce::AudioPluginInstance> inst);
         // The user-declared ~Slot() suppresses the implicit move ctor/assign;
         // declare them explicitly (defined in JuceBackend.cpp) so slots_
         // (std::vector<Slot>) can reallocate. Moving transfers the unique_ptr

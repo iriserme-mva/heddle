@@ -317,6 +317,13 @@ int JuceBackend::channelCount(const std::string& slotId, int fallback) const {
 // Out-of-line Slot raw teardown: needs the complete Steinberg::Vst::IAudioProcessor
 // type (only forward-declared in the header).
 JuceBackend::Slot::~Slot() { releaseRaw(); }
+// Out-of-line 3-arg ctor: the body touches the unique_ptr<AudioPluginInstance>
+// member, which requires the complete JUCE type; an inline body would be
+// instantiated in every TU that includes JuceBackend.hpp (smoke.cpp et al.),
+// where MSVC 14.51 (CI) hard-errors on the incomplete type.
+JuceBackend::Slot::Slot(const std::string& i, const std::string& p,
+                        std::unique_ptr<juce::AudioPluginInstance> inst)
+    : id(i), path(p), instance(std::move(inst)) {}
 JuceBackend::Slot::Slot(Slot&& other) noexcept
     : id(std::move(other.id)),
       path(std::move(other.path)),
