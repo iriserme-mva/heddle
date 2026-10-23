@@ -181,6 +181,21 @@ TEST_CASE("classifies bare /chain/<slot> as a slot param query") {
     CHECK(b.slotToken == "0");
 }
 
+TEST_CASE("classifies reserved /chain/quit and /chain/status as Unknown") {
+    // Reserved host-control words (host_main.cpp extension branch) must NOT
+    // be swallowed by the bare /chain/<slot> -> QueryAll mapping, or the host
+    // can no longer intercept /chain/quit (-> "quitting" + clean exit) or
+    // /chain/status (-> status line). Regression: the QueryAll mapping once
+    // swept these into handleQuerySlot -> "param not found", so the host
+    // never quit (CI bridge-test "no 'quitting' for /chain/quit").
+    auto q = osc_addr::classify(OscMsg::make("/chain/quit"));
+    CHECK(q.op == ParamAction::Op::Unknown);
+    CHECK(!q.ok());
+    auto s = osc_addr::classify(OscMsg::make("/chain/status"));
+    CHECK(s.op == ParamAction::Op::Unknown);
+    CHECK(!s.ok());
+}
+
 TEST_CASE("classifies apply path and config blob") {
     auto p = osc_addr::classify(OscMsg::make("/chain/apply", std::string("/tmp/c.json")));
     CHECK(p.op == ParamAction::Op::ApplyPath);

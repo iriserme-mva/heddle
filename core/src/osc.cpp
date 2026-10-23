@@ -199,7 +199,17 @@ ParamAction classify(const OscMsg& msg) {
     // Bare /chain/<slot> (no args) = "list all params of this slot" (the
     // QueryAll surface; see the addressing scheme in heddle/osc.hpp — the
     // proxy's DISCOVER issues exactly this after /chain/query).
-    if (rest.size() == slotTok.size()) { a.op = ParamAction::Op::QueryAll; return a; }
+    // Reserved host-control words are NOT slots and must stay Unknown so the
+    // host's extension branch (host_main.cpp) can intercept them:
+    //   /chain/quit  -> "quitting" reply + clean exit
+    //   /chain/status -> current status line
+    // (query/reset/apply/config are already matched by the explicit returns
+    //  above, so only quit/status reach here.)
+    if (rest.size() == slotTok.size()) {
+        if (slotTok == "quit" || slotTok == "status") return a;  // -> Unknown
+        a.op = ParamAction::Op::QueryAll;
+        return a;
+    }
     if (rest[i] != '/') return a;
     i++;
     std::string second = token(rest, i);
