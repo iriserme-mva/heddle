@@ -30,3 +30,4 @@ Thumbs.db
 *.wav
 out/
 logs/
+heddle_host_child_err.txt
