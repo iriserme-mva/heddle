@@ -341,7 +341,8 @@ public:
         if (dbgWin_) {
             const char* dp = std::getenv("HEDDLE_DBG_FILE");
             dbgWinFile_ = std::fopen(dp ? dp : "dbg_win.txt", "w");
-            setvbuf(dbgWinFile_, nullptr, _IONBF, 0);  // unbuffered
+            if (dbgWinFile_)
+                setvbuf(dbgWinFile_, nullptr, _IONBF, 0);  // unbuffered
         }
         if (!chain.load(cfg_, &err)) {
             logErr("chain load failed: " + err);
@@ -828,6 +829,11 @@ private:
             std::vector<float*> inPtrs(width, nullptr);
             std::vector<float*> outPtrs(width, nullptr);
             heddle::rawv::RawParamChanges changes;
+            // SDK types live in Steinberg/Vst (aliased into heddle::rawv); the
+            // queue-building code below uses them unqualified.
+            using heddle::rawv::int32;
+            using heddle::rawv::ParamValue;
+            using Wp = heddle_InBlockCurve::Wp;
             struct Pt { uint32_t paramId; size_t idx; float v1; };
             std::vector<Pt> pts;
             juce::AudioBuffer<float>* cur = &workIn_;
@@ -839,23 +845,83 @@ private:
                     inPtrs[c]  = cur->getWritePointer(c);
                     outPtrs[c] = next->getWritePointer(c);
                 }
-                // Two-point queue for THIS slot's active params only.
+                // Queue for THIS slot's active params. The block's value is the
+                // piecewise-linear chord through the (fractional-block) waypoint
+                // window; every slope change (KINK) inside this block becomes its
+                // own queue point so a compliant plugin renders the true curve
+                // per-sample:
+                //   * integer stamps only -> no in-block kinks, the queue degrades
+                //     to exactly the old two points (start + end);
+                //   * sub-block stamps (delay/duration sets) -> in-block kinks
+                //     carry the 0.5-block offsets the user asked for.
+                // evalCurve handles hold / chord / hold-past-last for us, so the
+                // start (offset 0) and end (offset S-1) values are just the chord
+                // at the block's first and last sample.
+                struct QPts { std::vector<int32> off; std::vector<ParamValue> v; };
+                auto buildQueuePts = [&](const CurveEntry& e, uint32_t S) {
+                    const double b = static_cast<double>(curBlock);
+                    const double epos = b + 1.0;
+                    const Wp* w = e.window.data();
+                    const size_t nw = e.window.size();
+                    const auto valAt = [&](double pos) {
+                        return heddle_InBlockCurve::evalCurve(w, nw, pos, e.carry);
+                    };
+                    std::vector<std::pair<int32, ParamValue>> raw;
+                    raw.emplace_back(0, (ParamValue) valAt(b));          // block start
+                    for (size_t i = 0; i < nw; ++i)
+                        if (w[i].block > b + 1e-9 && w[i].block < epos - 1e-9)
+                            raw.emplace_back(   // in-block kink: the curve bends
+                                                // here; value = the EVALUATED
+                                                // curve (not the wp's stored
+                                                // value -- superseded wps are
+                                                // collinear and must not leak)
+                                (int32) std::lround((w[i].block - b) * (double) S),
+                                (ParamValue) valAt(w[i].block));
+                    raw.emplace_back((int32)(S - 1),                      // block end
+                        (ParamValue) valAt(b + (S - 1) / (double) S));
+                    std::sort(raw.begin(), raw.end(),
+                              [](const auto& a, const auto& c) { return a.first < c.first; });
+                    QPts q;
+                    q.off.reserve(raw.size());
+                    q.v.reserve(raw.size());
+                    for (const auto& kv : raw) {
+                        int32 off = kv.first;
+                        if (off < 0) off = 0;
+                        if (off > (int32)(S - 1)) off = (int32)(S - 1);
+                        if (!q.off.empty() && q.off.back() == off)
+                            q.v.back() = kv.second;      // merge duplicates (last wins)
+                        else {
+                            q.off.push_back(off);
+                            q.v.push_back(kv.second);
+                        }
+                    }
+                    return q;
+                };
                 changes.clear();
                 pts.clear();
                 for (const auto& scv : slotsCurve_) {
                     if (scv.first != (int) s) continue;
                     for (const auto& c : scv.second) {
                         CurveEntry& e = curveSlots_[c.idx];
-                        const float v0 = heddle_InBlockCurve::chordAt(
-                            e.window.data(), e.window.size(), curBlock, S, 0, e.carry);
-                        const float v1 = heddle_InBlockCurve::chordAt(
-                            e.window.data(), e.window.size(), curBlock, S, S - 1, e.carry);
-                        changes.append(c.paramId, (double) v0, (double) v1, (int) S);
+                        const QPts q = buildQueuePts(e, S);
+                        changes.append(c.paramId, (int32) S, q.off, q.v);
+                        const float v1 = q.v.empty() ? e.carry
+                                                     : (float) q.v.back();
                         pts.push_back({c.paramId, c.idx, v1});
-                        if (dbgWin_ && dbgWinFile_)
-                            std::fprintf(dbgWinFile_,
-                                         "SEND blk=%u p=%u v0=%.6f v1=%.6f\n",
-                                         curBlock, c.paramId, v0, v1);
+                        // Debug window: per-block SEND log. The env-gated
+                        // dbgWinFile_ is nullptr in normal (non-debug) runs,
+                        // so EVERY write in this block must be guarded -- the
+                        // loop and trailing newline previously ran unguarded
+                        // and dereferenced a null FILE* on the first curve
+                        // block, killing the host (0xC0000409) in non-debug.
+                        if (dbgWin_ && dbgWinFile_) {
+                            std::fprintf(dbgWinFile_, "SEND blk=%u p=%u npts=%zu",
+                                         curBlock, c.paramId, q.off.size());
+                            for (size_t i = 0; i < q.off.size(); ++i)
+                                std::fprintf(dbgWinFile_, " (%d,%.6f)", q.off[i],
+                                             (double) q.v[i]);
+                            std::fprintf(dbgWinFile_, "\n");
+                        }
                     }
                 }
                 const int processed = backend_.rawProcess(
@@ -865,7 +931,8 @@ private:
                 if (processed == static_cast<int>(S)) {
                     for (const Pt& p : pts)
                         curveSlots_[p.idx].carry = p.v1;  // plugin latches v1
-                } else {
+                }
+                if (processed != static_cast<int>(S)) {
                     // No raw interface (non-VST3) or raw call failed: latch the
                     // block-start chord and run the whole block via JUCE.
                     pushCurveAtSlot((int) s, curBlock, S, 0);
@@ -1097,7 +1164,17 @@ private:
         }
     }
 
-    void scheduleCurveSet(int slotIdx, uint32_t paramId, float v01) {
+    // delay/duration semantics (sub-block scheduling):
+    //   anchorPos = curBlock + delay     (delay=0 -> curBlock: EXACTLY the
+    //             committed click-verified behaviour; delay shifts FRACTIONALLY,
+    //             so 0.5 = mid-block),
+    //   targetPos = anchorPos + duration (duration = -1 sentinel / missing ->
+    //             kLookahead blocks: the legacy two-block ramp, byte-identical
+    //             to the committed code for the default single-float set).
+    // delay >= 0 keeps every set at/after the current block, so blocks already
+    // committed never bend retroactively (no click at "now").
+    void scheduleCurveSet(int slotIdx, uint32_t paramId, float v01,
+                          float delay = 0.f, float duration = -1.f) {
         if (slotIdx < 0 || slotIdx >= (int)cfg_.slots.size()) return;
         const auto it = curveIndex_.find(std::make_pair(slotIdx, paramId));
         if (it == curveIndex_.end()) return;
@@ -1106,32 +1183,31 @@ private:
         const uint32_t curBlock = audioBlock_.load(std::memory_order_acquire);
         const ParamSet* ps = chain.slot(slotIdx);
         const Param* pp = (ps != nullptr) ? ps->find(paramId) : nullptr;
-        // Anchor EVERY set at the current block, pinned to the value the audio
-        // staircase is holding. The model value tracks the last requested value
-        // (setParamModelById at the end of every set), which for a running curve
-        // is exactly the value the staircase is holding, so `old` is the held
-        // value for BOTH the first set after (de)activation (the plugin's current
-        // value) and a follow-up set (the previous set's value). Pushed through
-        // the ring -- the message thread never writes the audio-owned
-        // window/carry, so there is no cross-thread write.
-        //
-        // Why on EVERY set, not just the first: without a per-set anchor, a
-        // follow-up set's single far waypoint re-slants the chord from the
-        // PREVIOUS waypoint backwards (retroactive bend). evalCurve then returns
-        // the bent chord value instead of the held value -> a single-sample
-        // click (measured: 0.0 -> 0.96875 = (71-9)/(73-9) at block 71). With the
-        // per-set anchor, each ramp starts clean from the held value at "now"
-        // and the value holds at "old" until the new ramp begins (no click).
-        const float old = (pp != nullptr) ? pp->value : v;
-        e.ring.push(curBlock, old);
+        // Push TWO waypoints: an ANCHOR at anchorPos and the TARGET at
+        // targetPos. The anchor's pushed value is the current model value; the
+        // audio thread RE-RESOLVES it at drain time against the up-to-date
+        // window (evalCurve at anchorPos) so a late set that lands inside a
+        // running ramp bends forward from the ACTUAL held value, never backward
+        // (the per-set anchor that killed the retroactive-bend click). Byte-
+        // identical to the committed model-value anchor whenever the set lands
+        // at a ramp boundary (the verified two-block case).
+        // duration < 0 is the core-layer sentinel for "default ramp length"
+        // (kLookahead is a host constant core cannot know); duration == 0 is a
+        // HARD SNAP: anchor and target collapse to one position -> a one-sample
+        // value jump, the fastest change the raw per-sample queue can express.
+        const float d = (delay > 0.f) ? delay : 0.f;
+        const float dur = (duration < 0.f) ? (float) kLookahead : duration;
+        const double anchorPos = (double) curBlock + (double) d;
+        const double targetPos = anchorPos + (double) dur;
+        const float old = (pp != nullptr) ? pp->value : v;  // drain re-resolves
+        e.ring.push(anchorPos, old, /*anchor=*/true);
         if (!e.active.load(std::memory_order_relaxed))
             e.active.store(true, std::memory_order_release);
-        e.ring.push(curBlock + kLookahead, v);  // newest wins per block at drain
+        e.ring.push(targetPos, v, /*anchor=*/false);
         if (dbgWin_ && dbgWinFile_)
-            std::fprintf(dbgWinFile_, "SET slot=%d cur=%u anchor(%.1f,%.4f) "
-                       "target(%.1f,%.4f)\n", slotIdx, curBlock,
-                       (double)curBlock, old, (double)(curBlock + kLookahead),
-                       v);
+            std::fprintf(dbgWinFile_, "SET slot=%d cur=%u anchor(%.2f,?) "
+                       "target(%.2f,%.4f) dur=%.2f\n", slotIdx, curBlock,
+                       (double)anchorPos, (double)targetPos, v, (double)dur);
         chain.setParamModelById(slotIdx, paramId, v);
     }
 
@@ -1149,13 +1225,27 @@ private:
     }
 
     // Audio thread (start of block `block`): drain every active curve's SPSC
-    // ring into its ordered waypoint window (arrival order is non-decreasing in
-    // block stamp, so append and compact same-block duplicates newest-wins),
-    // then keep only the last waypoint at/BEFORE the current block (the
-    // continuity anchor) plus all future waypoints -- everything older is dead
-    // weight for evalCurve, which uses the nearest-left waypoint only. This
-    // bounds the window to ~one ring of pending waypoints regardless of how
-    // long a curve has been running. Rebuilds the per-slot working list.
+    // ring into its ordered waypoint window and keep only the last waypoint
+    // at/BEFORE the current block (the continuity anchor) plus all future
+    // waypoints -- everything older is dead weight for evalCurve, which uses
+    // the nearest-left waypoint only. This bounds the window to ~one ring of
+    // pending waypoints regardless of how long a curve has been running.
+    //
+    // The batch is in ARRIVAL order and each set contributes a consecutive
+    // (anchor, target) pair (the ring is FIFO and scheduleCurveSet pushes
+    // them back to back); anchor positions are non-decreasing (the message
+    // thread stamps from the monotonic audio-block counter). For each anchor
+    // the value is RE-RESOLVED against the window state BEFORE the pair:
+    // evalCurve(window, anchorPos) with hold = the pushed model value (the
+    // plugin's current value when nothing is scheduled). That is the
+    // click-free bend: a late set bends the curve forward from the TRUE
+    // staircase value at its anchor, never from a stale requested value;
+    // a same-position burst collapses to the last set starting from the true
+    // value (the earlier set's in-flight target is superseded, not chained
+    // to). Superseded targets are left in the window harmlessly: evalCurve's
+    // nearest-left scan can only pick a later-arrived wp at the same or an
+    // earlier position, and buildQueuePts takes kink values from evalCurve
+    // (collinear for the dead ones).
     void prepareCurvesForBlock(uint32_t block) {
         slotsCurve_.clear();
         for (size_t i = 0; i < curveSlots_.size(); ++i) {
@@ -1167,10 +1257,15 @@ private:
                 auto& w = e.window;
                 w.reserve(w.size() + n);
                 for (size_t j = 0; j < n; ++j) {
-                    if (!w.empty() && w.back().block == buf[j].block)
-                        w.back().value = buf[j].value;   // newest wins
-                    else
-                        w.push_back(buf[j]);
+                    if (buf[j].anchor) {
+                        // Resolve against the window state before this set's
+                        // pair (the anchor is not in w yet); the hold is the
+                        // pushed model value (valid for positions before the
+                        // first scheduled point = the plugin's current value).
+                        buf[j].value = heddle_InBlockCurve::evalCurve(
+                            w.data(), w.size(), buf[j].block, buf[j].value);
+                    }
+                    w.push_back(buf[j]);
                 }
                 // Drop everything older than the last completed waypoint.
                 size_t keepFrom = w.size();
@@ -1307,7 +1402,10 @@ private:
         const std::string name = p->title;
         const float v = Param::clamp01(a.value);
         if (inblock_) {
-            scheduleCurveSet(idx, p->id, v);
+            // Sub-block timing: a.delay (hold, blocks, fractional) and
+            // a.duration (ramp, blocks; 0 = hard snap, <0 = default) ride
+            // straight through to the curve scheduler.
+            scheduleCurveSet(idx, p->id, v, a.delay, a.duration);
         } else {
             chain.setParamById(a.slotToken, p->id, v);
         }

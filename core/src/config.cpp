@@ -98,6 +98,11 @@ bool parse(const std::string& jsonText, ChainConfig& out, std::string* err) {
         cfg.sampleRate = j["sample_rate"].get<int>();
     if (j.contains("block_size") && j["block_size"].is_number_integer())
         cfg.blockSize = j["block_size"].get<int>();
+    if (j.contains("curve_resolution") && j["curve_resolution"].is_number_integer()) {
+        const int r = j["curve_resolution"].get<int>();
+        if (r < 0) return fail("curve_resolution must be >= 0");
+        cfg.curveResolution = r;
+    }
     if (j.contains("osc") && j["osc"].is_object()) {
         const json& o = j["osc"];
         if (o.contains("port")) {
@@ -159,6 +164,8 @@ std::string dump(const ChainConfig& cfg) {
     json j;
     j["sample_rate"] = cfg.sampleRate;
     j["block_size"] = cfg.blockSize;
+    if (cfg.curveResolution > 0)
+        j["curve_resolution"] = cfg.curveResolution;  // 0 = default, omitted
     if (cfg.osc.port > 0 || cfg.osc.bindHost != OscConfig{}.bindHost) {
         json o;
         o["port"] = cfg.osc.port;
@@ -185,6 +192,10 @@ ChainConfig merge(const ChainConfig& base, const ChainConfig& overrideCfg) {
     ChainConfig out = base;
     out.sampleRate = overrideCfg.sampleRate > 0 ? overrideCfg.sampleRate : base.sampleRate;
     out.blockSize = overrideCfg.blockSize > 0 ? overrideCfg.blockSize : base.blockSize;
+    // curve_resolution: a positive override wins; 0 in the override means
+    // "not specified" — the base's resolution is kept.
+    if (overrideCfg.curveResolution > 0)
+        out.curveResolution = overrideCfg.curveResolution;
     // OSC: same convention as sampleRate/blockSize — 0 / default value in the
     // override means "not specified", so the base keeps its server settings.
     if (overrideCfg.osc.port > 0) out.osc.port = overrideCfg.osc.port;

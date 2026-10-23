@@ -207,12 +207,30 @@ ParamAction classify(const OscMsg& msg) {
     // /chain/<slot>/<param>
     a.param = second;
     if (msg.typeTags.empty()) { a.op = ParamAction::Op::QueryAll; return a; }
-    if (msg.typeTags[0] == 'f') { a.op = ParamAction::Op::SetByName; a.value = msg.floats[0]; }
+    if (msg.typeTags[0] == 'f') {
+        a.op = ParamAction::Op::SetByName;
+        // Wire contract (sub-block scheduling, whole-queue raw path), floats in
+        // the order [value, (delay), (duration)]:
+        //   1 float  -> [value]                 default ramp over kLookahead
+        //                                        blocks (backward compatible)
+        //   2 floats -> [value, delay]          default ramp, delayed
+        //   3 floats -> [value, delay, duration] explicit; delay/duration in
+        //                                        BLOCKS, duration 0 = hard snap
+        // A duration of -1.f is the SENTINEL for "use the default ramp length"
+        // (kLookahead is a host constant core cannot know), resolved in the
+        // host's scheduleCurveSet.
+        a.value    = msg.floats[0];
+        a.delay    = (msg.floats.size() >= 2) ? msg.floats[1] : 0.f;
+        a.duration = (msg.floats.size() >= 3) ? msg.floats[2] : -1.f;
+    }
     else if (msg.typeTags[0] == 'i') {
         a.op = ParamAction::Op::SetById;
         a.paramId = uint32_t(msg.ints[0]);
-        if (msg.typeTags.size() >= 2 && msg.typeTags[1] == 'f') a.value = msg.floats[0];
-        else a.value = Param::clamp01(float(msg.ints[0]) / 1000.f);
+        if (msg.typeTags.size() >= 2 && msg.typeTags[1] == 'f') {
+            a.value    = msg.floats[0];
+            a.delay    = (msg.floats.size() >= 2) ? msg.floats[1] : 0.f;
+            a.duration = (msg.floats.size() >= 3) ? msg.floats[2] : -1.f;
+        } else a.value = Param::clamp01(float(msg.ints[0]) / 1000.f);
     } else return a;
     return a;
 }

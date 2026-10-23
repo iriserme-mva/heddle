@@ -11,6 +11,12 @@ namespace juce {
 class AudioPluginInstance;
 }
 
+namespace Steinberg {
+namespace Vst {
+class IAudioProcessor;
+}
+}
+
 namespace heddle {
 
 // JUCE-backed implementation of heddle::IPluginBackend.
@@ -72,6 +78,45 @@ public:
     // The input channel count is returned if the slot is not loaded.
     int channelCount(const std::string& slotId, int fallback) const;
 
+    // ---- Raw VST3 in-block curve path (curve_resolution == 0) ---------------
+    // The JUCE host wrapper latches ONE (param, value, offset-0) point per
+    // process() call, so a smooth in-block curve cannot be expressed through
+    // JUCE's processBlock. The VST3 host API, however, allows a full multi-point
+    // IParameterChanges per block and the plugin is expected to interpolate
+    // between queue points per-sample. When the plugin is a VST3 we can reach
+    // its raw Vst::IAudioProcessor (via the JUCE ExtensionsVisitor) and drive
+    // process() directly with a two-point queue (start @ offset 0, end @
+    // offset S-1) -- one call per block. This is the DEFAULT in-block path.
+    //
+    // The raw pointer is resolved once on the message thread by resolveRaw()
+    // (called from setProcessSpec after prepareToPlay, when the VST3 instance
+    // is fully created). rawProcess()/hasRawProcessor() are then pure readers,
+    // safe to call from the audio thread. A non-VST3 slot resolves to nullptr
+    // and the caller falls back to the JUCE processBlock path (processChannels
+    // with curveSubstep_).
+    //
+    // rawProcess() returns the number of frames processed, or -1 if the slot
+    // has no raw IAudioProcessor (non-VST3) -- the caller falls back. in/out
+    // are per-channel pointers each pointing at `frames` samples of channel ch
+    // (the work buffers' channel stride is the full block size, so the caller
+    // passes true per-channel pointers, as processChannels does). `changes`
+    // is the block's RawParamChanges (2-point queue per active param), or
+    // nullptr when no param is active this block. The plugin learns the sample
+    // rate / block size from prepareToPlay (already issued), so this call
+    // carries no rate (the SDK's ProcessData has no sample-rate field).
+    int rawProcess(const std::string& slotId,
+                   float** in, float** out,
+                   int channels, int frames,
+                   void* rawParamChanges);
+
+    // True if the slot's plugin is a VST3 with a resolvable raw IAudioProcessor
+    // (the in-block raw path is available). Pure read of a message-thread-resolved
+    // pointer, safe from the audio thread.
+    bool hasRawProcessor(const std::string& slotId) const;
+
+    // Resolve every slot's raw Vst::IAudioProcessor (VST3 only). Message thread.
+    void resolveRaw();
+
     int numLoadedSlots() const;
 
     // Read the live (normalized 0..1) value of a plugin parameter by model
@@ -87,6 +132,34 @@ private:
         std::string id;
         std::string path;
         std::unique_ptr<juce::AudioPluginInstance> instance;
+        // Raw VST3 accessors for the in-block curve path (curve_resolution==0).
+        // audioProcessor_ is the plugin's own IAudioProcessor, reached through
+        // JUCE's ExtensionsVisitor (getIComponentPtr()->queryInterface). We own
+        // one COM reference (addRef'd on retrieval) and release it in releaseRaw().
+        Steinberg::Vst::IAudioProcessor* audioProcessor_ = nullptr;
+        // Bus channel counts (the plugin's real input/output width) at the time
+        // the raw accessor was resolved; rawProcess sizes the two
+        // AudioBusBuffers to these so an in-place plugin reads/writes every
+        // channel and nothing past them.
+        int rawInCh = 1;
+        int rawOutCh = 1;
+        // Defined in JuceBackend.cpp: release() needs the complete
+        // Steinberg::Vst::IAudioProcessor type, but the header only forward-
+        // declares it (to keep including JuceBackend.hpp cheap for the CLIs).
+        void releaseRaw();
+        Slot() = default;
+        Slot(const std::string& i, const std::string& p,
+             std::unique_ptr<juce::AudioPluginInstance> inst)
+            : id(i), path(p), instance(std::move(inst)) {}
+        // The user-declared ~Slot() suppresses the implicit move ctor/assign;
+        // declare them explicitly (defined in JuceBackend.cpp) so slots_
+        // (std::vector<Slot>) can reallocate. Moving transfers the unique_ptr
+        // and the borrowed audioProcessor_ pointer as-is.
+        Slot(Slot&&) noexcept;
+        Slot& operator=(Slot&&) noexcept;
+        ~Slot();
+        Slot(const Slot&) = delete;
+        Slot& operator=(const Slot&) = delete;
     };
 
     std::vector<Slot> slots_;

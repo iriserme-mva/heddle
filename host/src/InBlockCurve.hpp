@@ -68,7 +68,15 @@ public:
     static constexpr size_t kCap = 512;    // power of two; must exceed the max
                                            // pushes between drains (the audio
                                            // thread drains once per block)
-    struct Wp { uint32_t block; float value; };
+    struct Wp { double block; float value; bool anchor; };
+    // block = FRACTIONAL block position (sub-block timing: 0.5 = mid-block).
+    // anchor = role flag: an ANCHOR is a "the value holds at this position"
+    //   point whose value is resolved at DRAIN time to the staircase value at
+    //   that position (so a late/retroactive set bends the curve forward from
+    //   the actual held value, never backward); a TARGET is the explicit ramp
+    //   end (block, value) pushed with the set. A target is STALE (dropped at
+    //   drain) once a later-arrived anchor sits at or before its position --
+    //   that target belongs to the superseded trajectory.
 
     heddle_InBlockCurve() { reset(); }
 
@@ -79,17 +87,18 @@ public:
         tail_.store(0, std::memory_order_relaxed);
     }
 
-    // Message thread: a set arrived; the value takes effect at the START of
-    // `block` (the caller adds the lookahead). A later waypoint for the same
-    // block supersedes the earlier one at drain time (newest wins) -- that
-    // is how a late-arriving point bends a not-yet-rendered block.
-    // Returns false if the ring was full (drop; audio thread stalled).
-    bool push(uint32_t block, float v01) {
+    // Message thread: a set arrived; push one waypoint. `block` is the
+    // (possibly FRACTIONAL) block position; `anchor` marks the waypoint's
+    // role (see Wp above). For an anchor, `v01` is only a placeholder: the
+    // consumer RESOLVES it at drain time against the current window so the
+    // curve stays continuous even when a late set lands inside a ramp.
+    bool push(double block, float v01, bool anchor = false) {
         const uint64_t h = head_.load(std::memory_order_relaxed);
         if (h - tail_.load(std::memory_order_acquire) >= kCap) return false;
         auto& s = slots_[h & (kCap - 1)];
         s.value = clamp01(v01);
         s.block = block;
+        s.anchor = anchor;
         head_.store(h + 1, std::memory_order_release);
         return true;
     }
@@ -104,6 +113,7 @@ public:
             const auto& s = slots_[t & (kCap - 1)];
             out[n].block = s.block;
             out[n].value = s.value;
+            out[n].anchor = s.anchor;
             ++n;
             ++t;
         }
@@ -166,7 +176,7 @@ private:
         return v;
     }
 
-    struct alignas(64) Slot { float value; uint32_t block; };
+    struct alignas(64) Slot { float value; double block; bool anchor; };
 
     std::atomic<uint64_t> head_{0};   // next slot to write
     std::atomic<uint64_t> tail_{0};   // next slot to read

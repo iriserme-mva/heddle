@@ -22,6 +22,12 @@ struct OscMsg {
     static OscMsg make(const std::string& addr, float v) {
         OscMsg m; m.addr = addr; m.floats.push_back(v); m.typeTags.push_back('f'); return m;
     }
+    // N-float form: [value, (delay), (duration)] for sub-block scheduling.
+    static OscMsg make(const std::string& addr, const std::vector<float>& fs) {
+        OscMsg m; m.addr = addr;
+        for (float f : fs) { m.floats.push_back(f); m.typeTags.push_back('f'); }
+        return m;
+    }
     static OscMsg make(const std::string& addr, int32_t v) {
         OscMsg m; m.addr = addr; m.ints.push_back(v); m.typeTags.push_back('i'); return m;
     }
@@ -70,6 +76,17 @@ struct ParamAction {
     std::string param;       // param name (SetByName)
     uint32_t paramId = 0;    // param id (SetById)
     float value = 0.f;       // normalized value (SetBy*)
+    // Sub-block timing (whole-queue raw path). delay = hold time before the
+    // ramp begins, in BLOCKS (0 = start at the earliest renderable block);
+    // duration = ramp length in BLOCKS (0 = hard snap = 1-sample jump).
+    // Wire contract: 1 float [value] -> default ramp (host's kLookahead),
+    // 2 floats [value,delay] -> delayed default ramp, 3 floats
+    // [value,delay,duration] -> explicit. duration==-1.f = "use the host's
+    // default ramp length" sentinel (kLookahead is a host constant, core
+    // cannot know it) -- the DEFAULT, so a programmatic set without explicit
+    // timing behaves exactly like the legacy single-float wire set.
+    float delay = 0.f;
+    float duration = -1.f;   // 0 = hard snap; >0 = ramp blocks; -1 = default
     std::string blob;        // path or config json (Apply*)
 
     bool ok() const { return op != Op::Unknown; }

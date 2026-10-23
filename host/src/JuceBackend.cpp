@@ -6,6 +6,18 @@
 #include <utility>
 
 #include <juce_audio_processors/juce_audio_processors.h>
+// NOTE: no direct include of utilities/juce_ExtensionsVisitor.h here -- the
+// umbrella header above already includes it (line 147), and that utility
+// header has NO include guard (only #ifndef DOXYGEN), so a second include
+// redefines juce::ExtensionsVisitor (C2011).
+
+// Raw VST3 interfaces (IComponent / IAudioProcessor) used by the in-block
+// curve path. The SDK root is on the include path (host/CMakeLists.txt); the
+// SDK objects themselves are already compiled into juce::juce_audio_processors,
+// so this is headers-only here -- no second copy, no ODR clash.
+#include "pluginterfaces/vst/ivstcomponent.h"
+#include "pluginterfaces/vst/ivstaudioprocessor.h"
+#include "RawVst3.hpp"
 
 namespace heddle {
 
@@ -75,6 +87,38 @@ heddle::Param mapParam(const juce::AudioProcessorParameter* p, uint32_t fallback
     }
 
     return param;
+}
+
+// Resolve the plugin's raw Vst::IAudioProcessor (only for VST3 instances).
+// JUCE's AudioPluginInstance::getExtensions() dispatches to our visitor; the
+// VST3Client hands back the same IComponent JUCE itself drives (getIComponentPtr),
+// which we QueryInterface to IAudioProcessor. We keep one COM reference (the
+// caller releases it via Slot::releaseRaw). Non-VST3 formats call visitUnknown
+// and this returns nullptr -- the caller then uses the JUCE processBlock path.
+Steinberg::Vst::IAudioProcessor* rawAudioProcessorOf(juce::AudioPluginInstance& inst) {
+    // A visitor deriving from ExtensionsVisitor; the VST3 plugin instance's
+    // getExtensions() builds its own VST3Client and calls visitVST3Client with
+    // it. getIComponentPtr() is the same IComponent JUCE drives.
+    struct V3 final : juce::ExtensionsVisitor {
+        Steinberg::Vst::IComponent* component = nullptr;
+        void visitVST3Client(const juce::ExtensionsVisitor::VST3Client& c) override {
+            component = c.getIComponentPtr();
+        }
+    };
+    V3 v3;
+    inst.getExtensions(v3);
+    if (v3.component == nullptr)
+        return nullptr;
+
+    // getIComponentPtr() hands a BORROWED pointer (JUCE's component.get(), no
+    // addRef), so we must not release it. The queryInterface below returns a
+    // fresh, independent reference on the IAudioProcessor interface -- that one
+    // we DO own, and it is released later by Slot::releaseRaw().
+    Steinberg::Vst::IAudioProcessor* audio = nullptr;
+    const auto r =
+        v3.component->queryInterface(Steinberg::Vst::IAudioProcessor::iid,
+                                     reinterpret_cast<void**>(&audio));
+    return (r == Steinberg::kResultOk) ? audio : nullptr;
 }
 
 }  // namespace
@@ -270,6 +314,99 @@ int JuceBackend::channelCount(const std::string& slotId, int fallback) const {
     return fallback;
 }
 
+// Out-of-line Slot raw teardown: needs the complete Steinberg::Vst::IAudioProcessor
+// type (only forward-declared in the header).
+JuceBackend::Slot::~Slot() { releaseRaw(); }
+JuceBackend::Slot::Slot(Slot&& other) noexcept
+    : id(std::move(other.id)),
+      path(std::move(other.path)),
+      instance(std::move(other.instance)),
+      audioProcessor_(other.audioProcessor_),
+      rawInCh(other.rawInCh),
+      rawOutCh(other.rawOutCh) {
+    other.audioProcessor_ = nullptr;  // moved-from holds no COM reference
+    other.rawInCh = 1;
+    other.rawOutCh = 1;
+}
+JuceBackend::Slot& JuceBackend::Slot::operator=(Slot&& other) noexcept {
+    if (this != &other) {
+        releaseRaw();
+        id          = std::move(other.id);
+        path        = std::move(other.path);
+        instance    = std::move(other.instance);
+        audioProcessor_ = other.audioProcessor_;
+        rawInCh           = other.rawInCh;
+        rawOutCh          = other.rawOutCh;
+        other.audioProcessor_ = nullptr;
+        other.rawInCh = 1;
+        other.rawOutCh = 1;
+    }
+    return *this;
+}
+void JuceBackend::Slot::releaseRaw() {
+    if (audioProcessor_ != nullptr) {
+        audioProcessor_->release();
+        audioProcessor_ = nullptr;
+    }
+}
+
+bool JuceBackend::hasRawProcessor(const std::string& slotId) const {
+    for (const auto& slot : slots_) {
+        if (slot.id == slotId)
+            return slot.audioProcessor_ != nullptr;
+    }
+    return false;
+}
+
+void JuceBackend::resolveRaw() {
+    // Message thread, after prepareToPlay: the VST3 instance is fully created
+    // and its ExtensionsVisitor answers visitVST3Client. Re-resolve every slot
+    // (releases any stale reference from a previous setProcessSpec/hot-apply).
+    for (auto& slot : slots_) {
+        slot.releaseRaw();
+        if (slot.instance == nullptr)
+            continue;
+        slot.audioProcessor_ = rawAudioProcessorOf(*slot.instance);
+        if (slot.audioProcessor_ != nullptr) {
+            slot.rawInCh  = std::max(1, slot.instance->getTotalNumInputChannels());
+            slot.rawOutCh = std::max(1, slot.instance->getTotalNumOutputChannels());
+        }
+    }
+}
+
+int JuceBackend::rawProcess(const std::string& slotId, float** in,
+                            float** out, int channels, int frames,
+                            void* rawParamChanges) {
+    for (const auto& slot : slots_) {
+        if (slot.id != slotId)
+            continue;
+        if (slot.audioProcessor_ == nullptr)
+            return -1;  // not a VST3 (or not resolved) -> caller falls back
+
+        // rawv::rawProcess (RawVst3.hpp) builds the two AudioBusBuffers, a
+        // single-bus realtime ProcessData, and hands `rawParamChanges` as
+        // inputParameterChanges (nullptr when no param is active). The plugin
+        // learned sample rate / block size from prepareToPlay. Buffers are
+        // sized to the plugin's real bus widths so an in-place plugin reads
+        // and writes every channel and nothing past them. `channels` is the
+        // host's work-buffer width (== min bus width by construction).
+        (void) channels;
+        heddle::rawv::RawParamChanges* changes =
+            static_cast<heddle::rawv::RawParamChanges*>(rawParamChanges);
+        const auto r = heddle::rawv::rawProcess(
+            slot.audioProcessor_,
+            0u,                                   // sample rate: no-op (not a ProcessData field)
+            (uint32_t) frames,
+            in,
+            (uint32_t) slot.rawInCh,
+            out,
+            (uint32_t) slot.rawOutCh,
+            changes);
+        return (r == Steinberg::kResultOk) ? frames : -1;
+    }
+    return -1;
+}
+
 int JuceBackend::busWidth() const {
     int width = 1;
     for (const auto& slot : slots_) {
@@ -285,6 +422,11 @@ void JuceBackend::setProcessSpec(double sampleRate, int samplesPerBlock) {
     for (auto& slot : slots_)
         if (slot.instance != nullptr)
             slot.instance->prepareToPlay(sampleRate, samplesPerBlock);
+    // Now that every VST3 instance is prepared (setupProcessing issued), the
+    // ExtensionsVisitor answers visitVST3Client -- resolve the raw
+    // IAudioProcessor pointers the in-block curve path (curve_resolution==0)
+    // uses. Message thread only; the audio thread reads them as plain pointers.
+    resolveRaw();
 }
 
 int JuceBackend::numLoadedSlots() const {

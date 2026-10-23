@@ -61,6 +61,22 @@ struct OscConfig {
 struct ChainConfig {
     int sampleRate = 44100;
     int blockSize = 512;
+    // In-block curve resolution.
+    //   0 = default: WHOLE-QUEUE path. One raw process() per block carrying a
+    //       two-point IParamValueQueue per active param (block-start value @
+    //       offset 0, block-end value @ offset S-1). A compliant VST3
+    //       linearly interpolates between the two points per-sample, so the
+    //       rendered parameter follows the true chord -- smooth, not a
+    //       staircase. Cheapest (one process() call per block) and still
+    //       click-free via the 2-block lookahead ramp. Requires the plugin to
+    //       be a VST3 (the host reaches its raw IAudioProcessor through JUCE);
+    //       non-VST3 plugins fall back to the block-start latch.
+    //   N (>0) = oversample: the block is sliced into N-sample segments, one
+    //       control point (and one process() call) per segment. A finer
+    //       staircase that converges to the chord; useful for plugins that do
+    //       NOT interpolate between queue points (they latch per call).
+    // The host CLI --substep N overrides this value when given.
+    int curveResolution = 0;
     std::vector<SlotConfig> slots;
     OscConfig osc;
 };
