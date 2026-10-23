@@ -96,6 +96,13 @@ Any param may be a **static** number (the backward-compatible form) or a
 `heddle-render` evaluates per-slot params at every block, so a curve automates
 the param across the render (static params are unchanged).
 
+> **Offline vs live timing** — offline (`heddle-render`) has **no lookahead and
+> no implicit ramp**: it latches the keyframe-linear value once per block
+> (block-start sampled). The live host (`heddle-host`) *does* use a 2-block
+> lookahead + default ramp for async OSC sets. See
+> [LOOKAHEAD.md](LOOKAHEAD.md) for the full comparison and the decision to
+> keep the two paths separate.
+
 ## Example
 
 See [`examples/chain.json`](../examples/chain.json).

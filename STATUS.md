@@ -7,6 +7,41 @@ current after every session** — last section first.
 
 - ✅ done · 🔨 in progress · ⏸ blocked (state why) · 📅 planned
 
+## heddle-proxy: one OSC surface → up to 5 Heddle targets (2026-10-23)
+
+- ✅ **`heddle-proxy`** — new JUCE-free core engine (`core/src/proxy.cpp` +
+  `core/include/heddle/proxy.hpp`, `proxy_engine.hpp`) + two front-ends:
+  **standalone exe** (`core/tools/proxy_main.cpp`; config file and/or CLI flags
+  `--listen/--mode/--target/--route/--query/--timeout/--stats`) and
+  **passthrough VST3** (`host/proxy_plugin/`, `HeddleProxy.vst3` — audio dry,
+  routes OSC; editor with listen/targets/routes/mode + **DISCOVER** button that
+  queries a target's slots/params and double-click-inserts a route).
+  3-state mode: `off` (drop all = pure passthrough in the VST) / `only-control`
+  (default; forward+rewrite only messages whose address exactly matches a
+  configured route) / `full` (forward every message as-is to all enabled
+  targets). Up to 5 targets; one surface address may fan out to several
+  `(target, slot, param)` rows; args forwarded verbatim so the host's
+  sub-block scheduling contract (docs/OSC.md) applies unchanged. No reply echo
+  to the surface. Discovery speaks the Heddle protocol (`/chain/query` →
+  `/reply/chain` → per-slot `/chain/<slotId>` → `/reply/<slotId>/<title>`).
+- ✅ **Local verification:** core `heddle_core_tests` **64/64 cases,
+  1739/1739 assertions** (4 new proxy cases: config round-trip, only-control
+  rewrite+drop, off-drop, discovery parse — loopback against a fake target
+  answering in the exact Heddle reply formats). Standalone end-to-end smoke
+  (real exe + fake target): `/k/0` fanned out to two targets' params, unmapped
+  `/k/1` dropped, stats `rec=2 fwd=2 drop=1`. VST3: `HeddleProxy.vst3` (3.2 MB)
+  built locally with MSVC 14.44 + JUCE 8.0.4.
+- ⏸ **CI:** `heddle-proxy` added to the core job's full build,
+  `heddle_proxy_plugin_VST3` added to the host job's target list (all 3 OSes);
+  unpushed at this commit — CI run to follow.
+- ✅ **Offline vs live lookahead decision** — documented in
+  `docs/LOOKAHEAD.md` (no reimplementation). Finding: the offline renderer
+  (`heddle-render`) is a *separate* path with **no lookahead and no implicit
+  ramp** (keyframe-linear, block-start latch); the 2-block `kLookahead` +
+  default ramp live only in the live host's async OSC scheduler. Decision:
+  keep the two paths separate (offline controls are given in advance, so a
+  2-block default ramp would be a correctness bug).
+
 ## In-block OSC scheduling: sub-block timing + whole-queue raw path (2026-10-23)
 
 - ✅ **`a5a402a`** — OSC 3-float wire contract (`[value]` / `[value,delay]` /
@@ -31,7 +66,7 @@ current after every session** — last section first.
   out-of-line (zero semantic change; local rebuild + use case + regression
   re-verified before push).
 - ✅ **CI GREEN (run 39915922827, all 6 jobs)** for `996707d`.
-- 📅 **Next:** `heddle-proxy` tool (see v0.1.8 section).
+- ✅ **heddle-proxy done** — see the heddle-proxy section above.
 
 ## v0.1.8 release cut (2026-10-22) — code-only, 0 assets by design
 
