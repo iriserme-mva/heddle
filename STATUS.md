@@ -31,9 +31,10 @@ current after every session** — last section first.
   (real exe + fake target): `/k/0` fanned out to two targets' params, unmapped
   `/k/1` dropped, stats `rec=2 fwd=2 drop=1`. VST3: `HeddleProxy.vst3` (3.2 MB)
   built locally with MSVC 14.44 + JUCE 8.0.4.
-- ⏸ **CI:** `heddle-proxy` added to the core job's full build,
-  `heddle_proxy_plugin_VST3` added to the host job's target list (all 3 OSes);
-  unpushed at this commit — CI run to follow.
+- ✅ **CI GREEN (run 39968644581, all 6 jobs)**: `heddle-proxy` in the core job
+  build, `heddle_proxy_plugin_VST3` in the host job's target list on all 3 OSes.
+  (First pass: 4/6 green, both macos-15 jobs cancelled at 15:00 = stuck-runner
+  timeout, not a build failure — `rerun-failed-jobs` → both macos green.)
 - ✅ **Offline vs live lookahead decision** — documented in
   `docs/LOOKAHEAD.md` (no reimplementation). Finding: the offline renderer
   (`heddle-render`) is a *separate* path with **no lookahead and no implicit
