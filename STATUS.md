@@ -7,6 +7,41 @@ current after every session** — last section first.
 
 - ✅ done · 🔨 in progress · ⏸ blocked (state why) · 📅 planned
 
+## Proxy editor: polished dark UI + SSH-key push (2026-10-24)
+
+- ✅ **`HeddleProxy` editor restyle** (`7cb417b`) — full dark-theme rewrite of
+  `host/proxy_plugin/plugin.cpp`: `HeddlePalette` (base `#171b21` → `#1f252e`
+  top gradient, panel `#232a35`, accent `#34c3a4`, text `#e9edf3`), flat
+  rounded `HeddleButton` (hover/down states), 52px title band with accent
+  underline, sectioned layout (TARGETS 5 slots / ROUTES 8 / DISCOVERED list)
+  with 1px dividers, `ListBox`-backed discovered-param list with accent
+  bullets (auto vertical scrollbar on overflow). Editor is 820×700 — the
+  initial 820×600 cut the DISCOVERED list off-screen (list bottom at 692px,
+  caught by visual inspection of the capture, not the compiler); `paint()`
+  divider offsets corrected to match `resized()` (`+36`). All harness
+  component names and all logic (`readInputs`/`cycleMode`/discover/apply)
+  unchanged — visual-only diff; the headless capture harness needed zero
+  edits (dynamic `getLocalBounds()` snapshots).
+- ✅ **JUCE 8.0.4 API audit** — this build has NO `setBrush`/`fillGradient`/
+  brush-based `fillAll`; the top-90px gradient is a manual per-row
+  `getRed()/getGreen()/getBlue()` lerp + `Colour::fromRGB`. Also fixed:
+  `ToggleButton` has no on/off colour split (single `textColourId` +
+  `tickColourId`), `ListBox` has no selected-row colour IDs (LAF-driven),
+  `ComboBox` real IDs are `buttonColourId`/`arrowColourId`/
+  `focusedOutlineColourId` and it has no `setFont`, `FontOptions` is 3-arg
+  only, `Font::Flags` is a scoped enum so style params are `int`.
+- ✅ **CI GREEN run `40114380975` (6/6 jobs, commit `7cb417b`)** — host
+  ubuntu/windows/macos-15 + core ×3 all success (verified via the jobs API).
+- ✅ **Push auth migrated to SSH key** — origin is now
+  `git@github.com:iriserme-mva/heddle.git`; ed25519 key `hermes-mv-win10`
+  registered on the account via the GitHub web UI (see `github-webui-login`
+  skill). Plain `git push origin main` is the default path; the PAT
+  inline-URL form is fallback-only (credential guard blocks the token read
+  on this profile).
+- ✅ **Capture verified + delivered** — 1640×1400 (`820×700` @2×) screenshot
+  vs a live host, pixel-verified palette + accent hits, delivered to DM
+  1975747592 via `send_tg_direct.py` (file_id confirmed).
+
 ## Proxy classify() reserved-word regression fix (2026-10-24)
 
 - ✅ **`classify()` fix follow-up** (`874ab94`) — the bare-`/chain/<slot>` →
