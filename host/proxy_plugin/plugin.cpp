@@ -165,20 +165,24 @@ public:
     void paintListBoxItem(int row, juce::Graphics& g, int, int height, bool) override {
         if (row < 0 || row >= (int) entries_.size()) return;
         const auto& e = entries_[row];
-        const juce::String text =
-            juce::String("t" + juce::String(e.targetIdx) + "  /chain/" +
-                         jstr(e.p.slot) + "/" +
-                         jstr(e.p.param) +
-                         "   (id " + juce::String(e.p.paramId) + ")");
         // The ListBox RowComponent does not set a text colour before calling
         // us, so drawText would use Graphics' default (black) — invisible on
-        // the dark list background. Pick a colour from the list's background.
-        const juce::Colour bg = (list_ != nullptr)
-            ? list_->findColour(juce::ListBox::backgroundColourId)
-            : juce::Colours::black;
-        g.setColour(bg.getBrightness() < 0.5f ? juce::Colours::white : juce::Colours::black);
-        g.setFont(height * 0.68f);
-        g.drawText(text, 4, 2, 2000, height, juce::Justification::left);
+        // the dark list background. Use the palette's colours (hex inlined:
+        // HeddlePalette is declared after this class in the file).
+        const juce::Colour accent(0xff34c3a4);   // HeddlePalette::accent
+        const juce::Colour text(0xffe9edf3);     // HeddlePalette::text
+        const juce::Colour dim(0xff9aa5b4);      // HeddlePalette::textDim
+        g.setColour(accent);
+        g.fillRect(6, (height - 8) / 2, 3, 8);   // accent bullet
+        const juce::String path = juce::String("/chain/") + jstr(e.p.slot) + "/" +
+                                  jstr(e.p.param);
+        g.setColour(text);
+        g.setFont(juce::FontOptions("Segoe UI", 11.0f, juce::Font::plain));
+        g.drawText(path, 16, 1, 2000, height, juce::Justification::left);
+        g.setColour(dim);
+        g.setFont(juce::FontOptions("Segoe UI", 10.0f, juce::Font::plain));
+        g.drawText("t" + juce::String(e.targetIdx) + "  #" + juce::String(e.p.paramId),
+                   16, 1, 2000, height, juce::Justification::right);
     }
     // JUCE 8.0.4: the double-click hook is listBoxItemDoubleClicked(row, e)
     // (there is no doubleClick(int) — that is TableListBoxModel).
@@ -204,26 +208,88 @@ private:
 // ===========================================================================
 // Editor
 // ===========================================================================
+// Shared dark palette for the proxy editor. Every child gets its colours set
+// explicitly so the panel looks the same under the default host LAF, the
+// headless capture harness, or any third-party VST host.
+struct HeddlePalette {
+    static juce::Colour base()         { return juce::Colour(0xff171b21); }
+    static juce::Colour baseTop()      { return juce::Colour(0xff1f252e); }
+    static juce::Colour panel()        { return juce::Colour(0xff232a35); }
+    static juce::Colour panelFocus()   { return juce::Colour(0xff2c3644); }
+    static juce::Colour accent()       { return juce::Colour(0xff34c3a4); }
+    static juce::Colour accentHover()  { return juce::Colour(0xff46d6b7); }
+    static juce::Colour accentDown()   { return juce::Colour(0xff27a98b); }
+    static juce::Colour neutral()      { return juce::Colour(0xff2c3441); }
+    static juce::Colour neutralHover() { return juce::Colour(0xff3a4453); }
+    static juce::Colour neutralDown()  { return juce::Colour(0xff1f252e); }
+    static juce::Colour text()         { return juce::Colour(0xffe9edf3); }
+    static juce::Colour textDim()      { return juce::Colour(0xff9aa5b4); }
+    static juce::Colour textFaint()    { return juce::Colour(0xff657082); }
+    static juce::Colour divider()      { return juce::Colour(0xff2b333f); }
+    static juce::Colour listBg()       { return juce::Colour(0xff1a1f27); }
+    static juce::Colour listSel()      { return juce::Colour(0xff2c4a44); }
+};
+
+// Small UI font: Segoe UI where available (it is, on Windows), falling back to
+// JUCE's default typeface otherwise.
+static juce::Font hf(float size, int style = juce::Font::plain) {
+    return juce::FontOptions("Segoe UI", size, style);
+}
+
+// Rounded, flat action button. Accent kind = the primary call-to-action (teal
+// fill, dark label); Neutral kind = secondary controls (slate fill, light
+// label). Derives from juce::Button so triggerClick()/onClick work exactly
+// like the stock TextButton it replaces.
+class HeddleButton : public juce::Button {
+public:
+    enum class Kind { Accent, Neutral };
+    HeddleButton(const juce::String& nm, const juce::String& txt, Kind kind)
+        : juce::Button(nm), kind_(kind) {
+        setButtonText(txt);
+    }
+    void paintButton(juce::Graphics& g, bool over, bool down) override {
+        const bool accent = kind_ == Kind::Accent;
+        const juce::Colour base  = accent ? HeddlePalette::accent()      : HeddlePalette::neutral();
+        const juce::Colour hover = accent ? HeddlePalette::accentHover() : HeddlePalette::neutralHover();
+        const juce::Colour dn    = accent ? HeddlePalette::accentDown()  : HeddlePalette::neutralDown();
+        const juce::Colour label = accent ? HeddlePalette::base()        : HeddlePalette::text();
+        const juce::Colour fill  = down ? dn : (over ? hover : base);
+        g.setColour(fill);
+        g.fillRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 5.0f);
+        g.setColour(label);
+        g.setFont(hf(12.0f, juce::Font::bold));
+        g.drawText(getButtonText(), getLocalBounds().reduced(4, 0),
+                   juce::Justification::centred);
+    }
+    void mouseEnter(const juce::MouseEvent&) override { repaint(); }
+    void mouseExit(const juce::MouseEvent&) override  { repaint(); }
+
+private:
+    Kind kind_;
+};
+
 class ProxyEditor : public juce::AudioProcessorEditor,
                     public juce::Timer {
 public:
     explicit ProxyEditor(ProxyProcessor& owner)
         : juce::AudioProcessorEditor(owner), owner_(owner) {
-        setSize(780, 600);
+        setSize(820, 700);
+        toBack();
 
         title_ = new juce::Label("t", "Heddle Proxy - OSC fan-out");
-        title_->setFont(juce::FontOptions(15.0f, juce::Font::bold));
-        title_->setColour(juce::Label::textColourId, juce::Colours::white);
+        title_->setFont(hf(15.0f, juce::Font::bold));
+        title_->setColour(juce::Label::textColourId, HeddlePalette::text());
         addAndMakeVisible(title_);
 
         status_ = new juce::Label("s", owner_.statusMsg_.toRawUTF8());
-        status_->setFont(juce::FontOptions(12.0f, juce::Font::bold));
+        status_->setFont(hf(11.0f));
         status_->setJustificationType(juce::Justification::centredRight);
+        status_->setColour(juce::Label::textColourId, HeddlePalette::textFaint());
         addAndMakeVisible(status_);
 
         // Mode 3-state button (OFF / ONLY-CONTROL / FULL).
-        mode_ = new juce::TextButton("mode");
-        mode_->setButtonText("MODE: " + modeLabel(owner_.cfg_.mode));
+        mode_ = new HeddleButton("mode", "MODE: " + modeLabel(owner_.cfg_.mode),
+                                 HeddleButton::Kind::Neutral);
         mode_->onClick = [this] {
             cycleMode();
             owner_.commitConfig("mode -> " + modeLabel(owner_.cfg_.mode).toStdString());
@@ -231,8 +297,7 @@ public:
         };
         addAndMakeVisible(mode_);
 
-        apply_ = new juce::TextButton("apply");
-        apply_->setButtonText("APPLY");
+        apply_ = new HeddleButton("apply", "APPLY", HeddleButton::Kind::Accent);
         apply_->onClick = [this] {
             readInputs();
             owner_.commitConfig("applied");
@@ -240,12 +305,13 @@ public:
         };
         addAndMakeVisible(apply_);
 
-        listenLbl_ = new juce::Label("ll", "listen port");
-        listenLbl_->setFont(juce::FontOptions(12.0f));
+        listenLbl_ = new juce::Label("ll", "LISTEN PORT");
+        styleFaintLabel(listenLbl_);
         addAndMakeVisible(listenLbl_);
         listenEd_ = new juce::TextEditor("lpe");
         listenEd_->setText(juce::String(owner_.cfg_.listenPort));
         listenEd_->setJustification(juce::Justification::centredLeft);
+        styleInput(listenEd_);
         addAndMakeVisible(listenEd_);
 
         buildTargets();
@@ -262,6 +328,41 @@ public:
 
     void timerCallback() override { refreshStatus(); }
 
+    void paint(juce::Graphics& g) override {
+        // Base background: flat base colour, with a subtle top gradient from
+        // baseTop to base over the first 90 px (drawn as 1px interpolated lines,
+        // since this JUCE build's Graphics has no brush/gradient fill API).
+        g.setColour(HeddlePalette::base());
+        g.fillRect(0, 0, getWidth(), getHeight());
+        const int gh = 90;
+        const juce::Colour top = HeddlePalette::baseTop();
+        const juce::Colour bot = HeddlePalette::base();
+        for (int y = 0; y < gh; ++y) {
+            const float t = (float)y / (float)gh;
+            const juce::uint8 r  = (juce::uint8)(top.getRed()   + t * (bot.getRed()   - top.getRed()));
+            const juce::uint8 gr = (juce::uint8)(top.getGreen() + t * (bot.getGreen() - top.getGreen()));
+            const juce::uint8 b  = (juce::uint8)(top.getBlue()  + t * (bot.getBlue()  - top.getBlue()));
+            g.setColour(juce::Colour::fromRGB(r, gr, b));
+            g.fillRect(0, y, getWidth(), 1);
+        }
+
+        // Title bar band with an accent underline.
+        g.setColour(HeddlePalette::baseTop());
+        g.fillRect(0, 0, getWidth(), 52);
+        g.setColour(HeddlePalette::accent());
+        g.fillRoundedRectangle(16, 30, 44, 4, 2.0f);
+
+        // Section dividers (behind the row groups). Offsets must match resized():
+        // each section starts at base + 36 (header) + rows*rowH + 10.
+        g.setColour(HeddlePalette::divider());
+        g.fillRect(16, 60, getWidth() - 32, 1);
+        const int t0 = 78, tRowH = 30;
+        const int r0 = t0 + 36 + ProxyConfig::kMaxTargets * tRowH + 10;
+        g.fillRect(16, r0 - 12, getWidth() - 32, 1);
+        const int d0 = r0 + 36 + kMaxRoutes * 30 + 10;
+        g.fillRect(16, d0 - 12, getWidth() - 32, 1);
+    }
+
     void resized() override {
         // Guard: the ctor's first setSize() fires resized() before the child
         // pointers below exist (headless hosts never opened the editor, so this
@@ -270,45 +371,53 @@ public:
             routesHdr_ == nullptr || discLbl_ == nullptr)
             return;
         const int W = getWidth();
-        title_->setBounds(12, 8, W - 12, 20);
-        status_->setBounds(W - 320, 10, 308, 18);
+        title_->setBounds(74, 14, 360, 22);
+        status_->setBounds(W - 332, 16, 316, 18);
 
-        mode_->setBounds(12, 34, 180, 28);
-        apply_->setBounds(200, 34, 90, 28);
-        listenLbl_->setBounds(300, 38, 78, 20);
-        listenEd_->setBounds(380, 36, 70, 22);
+        mode_->setBounds(16, 62, 170, 30);
+        apply_->setBounds(W - 106, 62, 90, 30);
+        listenLbl_->setBounds(200, 68, 96, 20);
+        listenEd_->setBounds(300, 66, 74, 24);
 
         // Targets block
-        const int t0 = 70;
-        targetsHdr_->setBounds(12, t0, 300, 16);
-        const int tRowH = 26;
+        const int t0 = 78;
+        targetsHdr_->setBounds(16, t0, 360, 16);
+        tgtColEn_->setBounds(16, t0 + 18, 60, 14);
+        tgtColIp_->setBounds(86, t0 + 18, 150, 14);
+        tgtColPt_->setBounds(242, t0 + 18, 64, 14);
+        const int tRowH = 30;
         for (int i = 0; i < ProxyConfig::kMaxTargets; ++i) {
-            const int y = t0 + 20 + i * tRowH;
-            targetEn_[i]->setBounds(12, y, 60, tRowH - 4);
-            targetIp_[i]->setBounds(78, y, 170, tRowH - 6);
-            targetPort_[i]->setBounds(254, y, 60, tRowH - 6);
+            const int y = t0 + 36 + i * tRowH;
+            targetEn_[i]->setBounds(28, y + 4, 40, 20);
+            targetIp_[i]->setBounds(86, y, 150, 24);
+            targetPort_[i]->setBounds(242, y, 64, 24);
         }
 
         // Routes block
-        const int r0 = t0 + 20 + ProxyConfig::kMaxTargets * tRowH + 8;
-        routesHdr_->setBounds(12, r0, 400, 16);
-        const int rRowH = 26;
-        const int xSrc = 12, xTgt = 168, xSlot = 236, xParam = 356, xClr = 500;
+        const int r0 = t0 + 36 + ProxyConfig::kMaxTargets * tRowH + 10;
+        routesHdr_->setBounds(16, r0, 420, 16);
+        rtColSrc_->setBounds(16, r0 + 18, 150, 14);
+        rtColTgt_->setBounds(176, r0 + 18, 56, 14);
+        rtColSlot_->setBounds(242, r0 + 18, 120, 14);
+        rtColPar_->setBounds(372, r0 + 18, 140, 14);
+        const int rRowH = 30;
+        const int xSrc = 16, xTgt = 176, xSlot = 242, xParam = 372, xClr = 528;
         for (int i = 0; i < kMaxRoutes; ++i) {
-            const int y = r0 + 20 + i * rRowH;
-            routeSrc_[i]->setBounds(xSrc, y, 150, rRowH - 6);
-            routeTgt_[i]->setBounds(xTgt, y, 64, rRowH - 4);
-            routeSlot_[i]->setBounds(xSlot, y, 114, rRowH - 6);
-            routeParam_[i]->setBounds(xParam, y, 146, rRowH - 6);
-            routeClr_[i]->setBounds(xClr, y, 26, rRowH - 4);
+            const int y = r0 + 36 + i * rRowH;
+            routeSrc_[i]->setBounds(xSrc, y, 150, 24);
+            routeTgt_[i]->setBounds(xTgt, y, 56, 26);
+            routeSlot_[i]->setBounds(xSlot, y, 120, 24);
+            routeParam_[i]->setBounds(xParam, y, 140, 24);
+            routeClr_[i]->setBounds(xClr, y, 28, 26);
         }
 
         // Discover block
-        const int d0 = r0 + 20 + kMaxRoutes * rRowH + 6;
-        discBtn_->setBounds(12, d0, 110, 28);
-        discTgt_->setBounds(128, d0, 90, 26);
-        discList_->setBounds(12, d0 + 34, 470, 60);
-        discLbl_->setBounds(490, d0 + 34, W - 500, 56);
+        const int d0 = r0 + 36 + kMaxRoutes * rRowH + 10;
+        discHdr_->setBounds(16, d0, 400, 16);
+        discBtn_->setBounds(16, d0 + 24, 120, 30);
+        discTgt_->setBounds(152, d0 + 24, 104, 28);
+        discList_->setBounds(16, d0 + 62, 300, 70);
+        discLbl_->setBounds(332, d0 + 62, W - 344, 70);
     }
 
 private:
@@ -323,6 +432,31 @@ private:
         if (owner_.cfg_.mode == "off") owner_.cfg_.mode = "only-control";
         else if (owner_.cfg_.mode == "only-control") owner_.cfg_.mode = "full";
         else owner_.cfg_.mode = "off";
+    }
+
+    // ---- Shared control styling -------------------------------------------
+    static void styleFaintLabel(juce::Label* l) {
+        l->setFont(hf(9.0f, juce::Font::bold));
+        l->setColour(juce::Label::textColourId, HeddlePalette::textFaint());
+    }
+    static void styleInput(juce::TextEditor* e) {
+        e->setFont(hf(12.0f));
+        e->setColour(juce::TextEditor::textColourId, HeddlePalette::text());
+        e->setColour(juce::TextEditor::backgroundColourId, HeddlePalette::panel());
+        e->setColour(juce::TextEditor::highlightColourId, HeddlePalette::panelFocus());
+    }
+    static void styleCombo(juce::ComboBox* c) {
+        c->setColour(juce::ComboBox::textColourId, HeddlePalette::text());
+        c->setColour(juce::ComboBox::outlineColourId, HeddlePalette::panelFocus());
+        c->setColour(juce::ComboBox::backgroundColourId, HeddlePalette::panel());
+        c->setColour(juce::ComboBox::buttonColourId, HeddlePalette::panelFocus());
+        c->setColour(juce::ComboBox::arrowColourId, HeddlePalette::textDim());
+        c->setColour(juce::ComboBox::focusedOutlineColourId, HeddlePalette::accent());
+    }
+    static void styleList(juce::ListBox* l) {
+        l->setColour(juce::ListBox::backgroundColourId, HeddlePalette::listBg());
+        l->setColour(juce::ListBox::outlineColourId, HeddlePalette::panelFocus());
+        l->setColour(juce::ListBox::textColourId, HeddlePalette::text());
     }
 
     // Copy editor field values into owner_.cfg_ (targets + routes + listen).
@@ -371,32 +505,58 @@ private:
     }
 
     void buildTargets() {
-        targetsHdr_ = new juce::Label("th", "Targets  (surface -> these Heddle instances)");
-        targetsHdr_->setFont(juce::FontOptions(12.0f, juce::Font::bold));
+        targetsHdr_ = new juce::Label("th", "TARGETS");
+        styleFaintLabel(targetsHdr_);
         addAndMakeVisible(targetsHdr_);
+        tgtColEn_ = new juce::Label("tce", "ON");
+        styleFaintLabel(tgtColEn_);
+        addAndMakeVisible(tgtColEn_);
+        tgtColIp_ = new juce::Label("tci", "HOST / IP");
+        styleFaintLabel(tgtColIp_);
+        addAndMakeVisible(tgtColIp_);
+        tgtColPt_ = new juce::Label("tcp", "PORT");
+        styleFaintLabel(tgtColPt_);
+        addAndMakeVisible(tgtColPt_);
         for (int i = 0; i < ProxyConfig::kMaxTargets; ++i) {
             targetEn_[i] = new juce::ToggleButton("te" + juce::String(i));
-            targetEn_[i]->setButtonText("on");
+            targetEn_[i]->setButtonText("ON");
             targetEn_[i]->setToggleState(owner_.cfg_.targets.size() > i ? owner_.cfg_.targets[i].enabled : true,
                                          juce::dontSendNotification);
+            targetEn_[i]->setClickingTogglesState(true);
+            targetEn_[i]->setColour(juce::ToggleButton::textColourId, HeddlePalette::text());
+            targetEn_[i]->setColour(juce::ToggleButton::tickColourId, HeddlePalette::accent());
             addAndMakeVisible(targetEn_[i]);
             targetIp_[i] = new juce::TextEditor("ti" + juce::String(i));
             if (owner_.cfg_.targets.size() > i)
                 targetIp_[i]->setText(jstr(owner_.cfg_.targets[i].ip));
             targetIp_[i]->setJustification(juce::Justification::centredLeft);
+            styleInput(targetIp_[i]);
             addAndMakeVisible(targetIp_[i]);
             targetPort_[i] = new juce::TextEditor("tp" + juce::String(i));
             if (owner_.cfg_.targets.size() > i)
                 targetPort_[i]->setText(juce::String(owner_.cfg_.targets[i].port));
             targetPort_[i]->setJustification(juce::Justification::centredLeft);
+            styleInput(targetPort_[i]);
             addAndMakeVisible(targetPort_[i]);
         }
     }
 
     void buildRoutes() {
-        routesHdr_ = new juce::Label("rh", "Routes  (surface addr -> target / slot / param)   [X clears a row]");
-        routesHdr_->setFont(juce::FontOptions(12.0f, juce::Font::bold));
+        routesHdr_ = new juce::Label("rh", "ROUTES   (surface address -> target / slot / param)");
+        styleFaintLabel(routesHdr_);
         addAndMakeVisible(routesHdr_);
+        rtColSrc_ = new juce::Label("rcs", "SURFACE ADDR");
+        styleFaintLabel(rtColSrc_);
+        addAndMakeVisible(rtColSrc_);
+        rtColTgt_ = new juce::Label("rct", "TGT");
+        styleFaintLabel(rtColTgt_);
+        addAndMakeVisible(rtColTgt_);
+        rtColSlot_ = new juce::Label("rcsl", "SLOT");
+        styleFaintLabel(rtColSlot_);
+        addAndMakeVisible(rtColSlot_);
+        rtColPar_ = new juce::Label("rcp", "PARAM");
+        styleFaintLabel(rtColPar_);
+        addAndMakeVisible(rtColPar_);
         // Target combo items: t0..t4.
         juce::StringArray titems;
         for (int i = 0; i < ProxyConfig::kMaxTargets; ++i) titems.add("t" + juce::String(i));
@@ -405,6 +565,7 @@ private:
             if (owner_.cfg_.routes.size() > i)
                 routeSrc_[i]->setText(jstr(owner_.cfg_.routes[i].srcAddr));
             routeSrc_[i]->setJustification(juce::Justification::centredLeft);
+            styleInput(routeSrc_[i]);
             addAndMakeVisible(routeSrc_[i]);
 
             routeTgt_[i] = new juce::ComboBox("rt" + juce::String(i));
@@ -415,23 +576,29 @@ private:
             routeTgt_[i]->addItem("t4", 5);
             const int sel = owner_.cfg_.routes.size() > i ? owner_.cfg_.routes[i].targetIdx + 1 : 1;
             routeTgt_[i]->setSelectedId(juce::jlimit(1, 5, sel), juce::dontSendNotification);
+            styleCombo(routeTgt_[i]);
             addAndMakeVisible(routeTgt_[i]);
 
             routeSlot_[i] = new juce::TextEditor("ro" + juce::String(i));
             if (owner_.cfg_.routes.size() > i)
                 routeSlot_[i]->setText(jstr(owner_.cfg_.routes[i].slot));
             routeSlot_[i]->setJustification(juce::Justification::centredLeft);
+            styleInput(routeSlot_[i]);
             addAndMakeVisible(routeSlot_[i]);
 
             routeParam_[i] = new juce::TextEditor("rp" + juce::String(i));
             if (owner_.cfg_.routes.size() > i)
                 routeParam_[i]->setText(jstr(owner_.cfg_.routes[i].param));
             routeParam_[i]->setJustification(juce::Justification::centredLeft);
+            styleInput(routeParam_[i]);
             addAndMakeVisible(routeParam_[i]);
 
             const int row = i;
             routeClr_[i] = new juce::TextButton("rx" + juce::String(i));
             routeClr_[i]->setButtonText("x");
+            routeClr_[i]->setColour(juce::TextButton::buttonColourId, HeddlePalette::neutral());
+            routeClr_[i]->setColour(juce::TextButton::textColourOffId, HeddlePalette::textDim());
+            routeClr_[i]->setColour(juce::TextButton::textColourOnId, HeddlePalette::accent());
             routeClr_[i]->onClick = [this, row] {
                 routeSrc_[row]->clear();
                 routeSlot_[row]->clear();
@@ -443,8 +610,11 @@ private:
     }
 
     void buildDiscover() {
-        discBtn_ = new juce::TextButton("db");
-        discBtn_->setButtonText("DISCOVER");
+        discHdr_ = new juce::Label("dh", "DISCOVERED PARAMS");
+        styleFaintLabel(discHdr_);
+        addAndMakeVisible(discHdr_);
+
+        discBtn_ = new HeddleButton("db", "DISCOVER", HeddleButton::Kind::Accent);
         discBtn_->onClick = [this] {
             readInputs();  // use the currently-typed targets
             const int ti = discTgt_->getSelectedId() - 1;
@@ -452,7 +622,7 @@ private:
                 status_->setText("discover: pick a valid target (set ip+port)", juce::dontSendNotification);
                 return;
             }
-            status_->setText("discovering " + jstr(owner_.cfg_.targets[ti].ip) + juce::String(juce::CharPointer_UTF8("\xE2\x80\xA6")),
+            status_->setText("discovering " + jstr(owner_.cfg_.targets[ti].ip) + "...",
                              juce::dontSendNotification);
             // Run on the message thread (this is already it); a short block is
             // acceptable for a manual button press.
@@ -477,10 +647,12 @@ private:
         discTgt_->addItem("t3", 4);
         discTgt_->addItem("t4", 5);
         discTgt_->setSelectedId(1, juce::dontSendNotification);
+        styleCombo(discTgt_);
         addAndMakeVisible(discTgt_);
 
         discList_ = new juce::ListBox("dl", &discModel_);
-        discList_->setRowHeight(14);
+        discList_->setRowHeight(16);
+        styleList(discList_);
         discModel_.setInsertCallback([this](int ti, const ProxyDiscovered::Param& p) {
             // Find the first empty route row and fill it.
             for (int i = 0; i < kMaxRoutes; ++i) {
@@ -498,10 +670,11 @@ private:
         addAndMakeVisible(discList_);
 
         discLbl_ = new juce::Label("dlb",
-                                   "DISCOVER queries a target's slots/params via the\n"
-                                   "Heddle OSC protocol (/chain/query). Double-click a\n"
-                                   "line to fill the next empty route row.");
-        discLbl_->setFont(juce::FontOptions(11.0f));
+                                   "DISCOVER queries a target's slots / params over the\n"
+                                   "Heddle OSC protocol (/chain/query). Double-click a line\n"
+                                   "to fill the next empty route row, then press APPLY.");
+        discLbl_->setFont(hf(10.5f));
+        discLbl_->setColour(juce::Label::textColourId, HeddlePalette::textFaint());
         addAndMakeVisible(discLbl_);
     }
 
@@ -522,11 +695,18 @@ private:
     juce::TextEditor* listenEd_ = nullptr;
 
     juce::Label* targetsHdr_ = nullptr;
+    juce::Label* tgtColEn_ = nullptr;
+    juce::Label* tgtColIp_ = nullptr;
+    juce::Label* tgtColPt_ = nullptr;
     juce::ToggleButton* targetEn_[ProxyConfig::kMaxTargets] = {};
     juce::TextEditor* targetIp_[ProxyConfig::kMaxTargets] = {};
     juce::TextEditor* targetPort_[ProxyConfig::kMaxTargets] = {};
 
     juce::Label* routesHdr_ = nullptr;
+    juce::Label* rtColSrc_ = nullptr;
+    juce::Label* rtColTgt_ = nullptr;
+    juce::Label* rtColSlot_ = nullptr;
+    juce::Label* rtColPar_ = nullptr;
     juce::TextEditor* routeSrc_[kMaxRoutes] = {};
     juce::ComboBox* routeTgt_[kMaxRoutes] = {};
     juce::TextEditor* routeSlot_[kMaxRoutes] = {};
@@ -534,6 +714,7 @@ private:
     juce::Button* routeClr_[kMaxRoutes] = {};
 
     juce::Button* discBtn_ = nullptr;
+    juce::Label* discHdr_ = nullptr;
     juce::ComboBox* discTgt_ = nullptr;
     juce::ListBox* discList_ = nullptr;
     juce::Label* discLbl_ = nullptr;
