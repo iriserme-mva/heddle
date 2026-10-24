@@ -8,7 +8,32 @@ on:
   workflow_dispatch:
 
 jobs:
+  paths_filter:
+    # Gate for the full 3-OS matrix: docs-only / README / STATUS pushes skip
+    # the expensive core+host builds (they take 10-15 min on the public
+    # runner pool) and only this ~30 s check job runs. ci.yml itself is in
+    # the code paths on purpose: a workflow edit re-runs the matrix once to
+    # prove the edit is valid (Actions rejects malformed YAML before any job
+    # starts, and the filter job itself would fail on a broken workflow).
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'CMakeLists.txt'
+              - 'core/**'
+              - 'host/**'
+              - 'third_party/**'
+              - '.github/workflows/**'
+
   core:
+    needs: paths_filter
+    if: needs.paths_filter.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -53,6 +78,8 @@ jobs:
           if-no-files-found: ignore
 
   host:
+    needs: paths_filter
+    if: needs.paths_filter.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
