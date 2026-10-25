@@ -11,6 +11,8 @@
 //     --mode off|only-control|full    override mode
 //     --target <ip:port>              add a target (repeatable, max 5)
 //     --route <src> <tgt> <slot> <param>   add a route (repeatable)
+//                                       (value mapping — arg/in_min/in_max/curve —
+//                                        is config-file-only, see docs/PROXY.md)
 //     --query <ip:port>               discover a target's slots/params, print, exit
 //     --timeout <ms>                  discovery timeout (default 1500)
 //     --stats <sec>                   stats line period on stderr (0 = off)
@@ -46,6 +48,8 @@ void printUsage(FILE* out) {
         "  --target <ip:port>                add a target (repeatable, max %d)\n"
         "  --route <src> <tgt> <slot> <param>   add a route (repeatable)\n"
         "      src = surface address, tgt = target index, slot/param = Heddle\n"
+        "      value mapping (arg, in_min, in_max, curve): config-file only\n"
+        "      (see docs/PROXY.md)\n"
         "  --query <ip:port>                 discover target params, print, exit\n"
         "  --timeout <ms>                    discovery timeout (default 1500)\n"
         "  --stats <sec>                     stats line period on stderr (0=off)\n"

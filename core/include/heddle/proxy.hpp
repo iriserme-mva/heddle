@@ -28,6 +28,65 @@ struct ProxyTarget {
     bool enabled = true;  // disabled targets are skipped by 'full' mode
 };
 
+// ---------------------------------------------------------------------------
+// Per-route value mapping (input-to-output).
+//
+// A surface control's raw float is (1) picked by index (`ProxyRoute::arg` —
+// X/Y knobs send two values; index 1 would otherwise be read as the optional
+// "delay" by the target), (2) rescaled from [inMin, inMax] to [0,1] and
+// clamped, then (3) shaped by a transfer curve. The identity/0..1 defaults
+// reproduce the old "forward verbatim" behaviour for a single-arg float, so
+// existing configs and plain sliders need no changes.
+// ---------------------------------------------------------------------------
+enum class ProxyCurve {
+    identity,  // y = x (default)
+    linear,    // == identity (alias kept for explicit configs)
+    exp,       // y = x^2      (fades / gain trims: slow out)
+    invexp,    // y = 1-(1-x)^2 (snappy start, slow out)
+    scurve,    // S-shape around 0.5 (sharper mid)
+};
+
+inline float proxyCurveEval(ProxyCurve c, float x) {
+    if (x < 0.0f) x = 0.0f;
+    if (x > 1.0f) x = 1.0f;
+    switch (c) {
+        case ProxyCurve::exp:
+            return x * x;
+        case ProxyCurve::invexp: {
+            const float i = 1.0f - x;
+            return 1.0f - i * i;
+        }
+        case ProxyCurve::scurve: {
+            // 3x^2 - 2x^3 (smoothstep): monotonic, 0->0, 1->1, kink-free.
+            return x * x * (3.0f - 2.0f * x);
+        }
+        case ProxyCurve::identity:
+        case ProxyCurve::linear:
+        default:
+            return x;
+    }
+}
+
+inline bool proxyCurveFromName(const std::string& n, ProxyCurve* out) {
+    if (n == "identity") { *out = ProxyCurve::identity; return true; }
+    if (n == "linear")   { *out = ProxyCurve::linear;   return true; }
+    if (n == "exp")      { *out = ProxyCurve::exp;      return true; }
+    if (n == "invexp")   { *out = ProxyCurve::invexp;   return true; }
+    if (n == "scurve")   { *out = ProxyCurve::scurve;   return true; }
+    return false;
+}
+
+inline const char* proxyCurveName(ProxyCurve c) {
+    switch (c) {
+        case ProxyCurve::linear:   return "linear";
+        case ProxyCurve::exp:      return "exp";
+        case ProxyCurve::invexp:   return "invexp";
+        case ProxyCurve::scurve:   return "scurve";
+        case ProxyCurve::identity:
+        default:                   return "identity";
+    }
+}
+
 // One routing rule: an incoming surface address is rewritten to
 // /chain/<slot>/<param> (the Heddle set-by-name form) on target `targetIdx`.
 struct ProxyRoute {
@@ -35,6 +94,17 @@ struct ProxyRoute {
     int targetIdx = 0;    // index into ProxyConfig::targets
     std::string slot;     // Heddle slot token on the target (id or index)
     std::string param;    // Heddle param name on the target
+    // Which float argument of the incoming message carries the value
+    // (0 = first, 1 = second, ...). Messages with fewer floats are dropped
+    // for this route (see ProxyEngine::pump).
+    int arg = 0;
+    // Input range: the picked float is remapped from [inMin, inMax] to [0,1]
+    // (clamped) before the curve. Defaults (0..1) keep the value as-is.
+    // inMin > inMax INVERTS the mapping (for a reversed surface control,
+    // e.g. a flipped slider or a TouchOSC control with swapped range).
+    double inMin = 0.0;
+    double inMax = 1.0;
+    ProxyCurve curve = ProxyCurve::identity;
 };
 
 struct ProxyConfig {

@@ -58,6 +58,23 @@ public:
     long long forwarded() const { return forwarded_; }
     long long dropped() const { return dropped_; }
 
+    // Learn list: the most recently RECEIVED surface messages (newest first),
+    // kept so the editor can show "what is the surface actually sending?" —
+    // every distinct address with its argument count — instead of the user
+    // having to know their TouchOSC layout by heart. The engine records
+    // EVERY message in every mode (including "off"), before any routing
+    // decision. Bounded to `kMaxRecent` (owner-thread read/write, pump() is
+    // the sole writer).
+    struct RecentMsg {
+        std::string addr;    // surface address as received
+        int numFloats = 0;   // count of 'f' args (values)
+        int numInts = 0;     // count of 'i' args
+        int numStrs = 0;     // count of 's' args
+        float first = 0.f;   // the first float, for a glance at the range
+    };
+    static constexpr int kMaxRecent = 24;
+    const std::vector<RecentMsg>& recent() const { return recent_; }
+
     // Re-read the routing table from cfg_ after a start(). Public for tests.
     // A message matches a route when its address EXACTLY equals route.srcAddr.
     // (Address normalization — trimming a leading "/k/" to the control token —
@@ -83,6 +100,10 @@ private:
     long long received_ = 0;
     long long forwarded_ = 0;
     long long dropped_ = 0;
+
+    // Learn list (newest first). pump() is the sole writer; the editor polls
+    // recent() on its own timer. Bounded to kMaxRecent.
+    std::vector<RecentMsg> recent_;
 };
 
 }  // namespace heddle

@@ -53,6 +53,8 @@ bool ProxyConfig::validate(const ProxyConfig& c, std::string* err) {
         if (r.slot.empty() || r.param.empty())
             return fail("route " + std::to_string(i) +
                         ": slot and param must be non-empty");
+        if (r.arg < 0)
+            return fail("route " + std::to_string(i) + ": arg must be >= 0");
     }
     return true;
 }
@@ -82,6 +84,19 @@ ProxyRoute routeFromJson(const json& o, std::string& err) {
         r.slot = o["slot"].get<std::string>();
     if (o.contains("param") && o["param"].is_string())
         r.param = o["param"].get<std::string>();
+    // Per-route value mapping (see ProxyRoute): optional in old configs —
+    // the defaults keep pre-mapping behaviour (first float, 0..1, identity).
+    if (o.contains("arg") && o["arg"].is_number_integer())
+        r.arg = o["arg"].get<int>();
+    if (o.contains("in_min") && o["in_min"].is_number())
+        r.inMin = o["in_min"].get<double>();
+    if (o.contains("in_max") && o["in_max"].is_number())
+        r.inMax = o["in_max"].get<double>();
+    if (o.contains("curve") && o["curve"].is_string()) {
+        ProxyCurve cv;
+        if (proxyCurveFromName(o["curve"].get<std::string>(), &cv))
+            r.curve = cv;
+    }
     (void) err;
     return r;
 }
@@ -148,7 +163,10 @@ std::string dump(const ProxyConfig& c) {
     json routes = json::array();
     for (const auto& r : c.routes)
         routes.push_back(json{{"src", r.srcAddr}, {"target", r.targetIdx},
-                              {"slot", r.slot}, {"param", r.param}});
+                              {"slot", r.slot}, {"param", r.param},
+                              {"arg", r.arg}, {"in_min", r.inMin},
+                              {"in_max", r.inMax},
+                              {"curve", proxyCurveName(r.curve)}});
     j["routes"] = std::move(routes);
     return j.dump(2);
 }
@@ -243,6 +261,7 @@ void ProxyEngine::stop() {
         impl_->out.clear();
         impl_->dests.clear();
     }
+    recent_.clear();
     started_ = false;
 }
 
@@ -253,6 +272,29 @@ int ProxyEngine::pump() {
     while (impl_->listen.poll(m, nullptr)) {
         ++got;
         ++received_;
+        // Learn list: record EVERY received message (all modes, before any
+        // routing decision) so the editor can surface the surface's real
+        // address layout. Distinct addresses, newest-first; a repeat refreshes
+        // the entry and moves it to the top. Bounded to kMaxRecent.
+        {
+            RecentMsg rec;
+            rec.addr = m.addr;
+            rec.numFloats = (int) m.floats.size();
+            rec.numInts = (int) m.ints.size();
+            rec.numStrs = (int) m.strs.size();
+            if (!m.floats.empty()) rec.first = m.floats.front();
+            for (size_t i = 1; i < recent_.size(); ++i)  // drop any stale copy
+                if (recent_[i].addr == rec.addr) {
+                    recent_.erase(recent_.begin() + i);
+                    break;
+                }
+            if (!recent_.empty() && recent_.front().addr == rec.addr)
+                recent_.front() = rec;                   // refresh in place
+            else
+                recent_.insert(recent_.begin(), rec);
+            if ((int) recent_.size() > kMaxRecent)
+                recent_.resize(kMaxRecent);
+        }
         if (cfg_.mode == "off") {
             ++dropped_;
             continue;
@@ -263,15 +305,38 @@ int ProxyEngine::pump() {
                 if (r.srcAddr != m.addr) continue;
                 const ProxyTarget& t = cfg_.targets[r.targetIdx];
                 if (!t.enabled) continue;
-                // Rewrite to the Heddle set-by-name form, forwarding the
-                // surface's arguments verbatim (the value float, and any
-                // delay/duration floats the surface sends).
+                // The target's /chain/<slot>/<param> set reads float[0] as the
+                // value and (optionally) float[1]/float[2] as delay/duration
+                // (heddle::classify). So the rewritten message carries
+                // EXACTLY ONE float: the one the route picked by index,
+                // rescaled and curve-shaped. Surfaces with extra values
+                // (X/Y knobs) must not leak them into the delay slot — hence
+                // the explicit arg selection instead of forwarding verbatim.
+                if (r.arg >= (int) m.floats.size())
+                    continue;  // this route wants a float the message lacks
+                hit = true;
+                const float raw = m.floats[r.arg];
+                float x;
+                if (r.inMax != r.inMin) {
+                    // Remap [inMin,inMax] -> [0,1] and clamp. InMin > inMax
+                    // inverts the mapping (flipped surface control).
+                    x = (float) ((raw - (float) r.inMin) /
+                                 (float) (r.inMax - r.inMin));
+                    if (x < 0.0f) x = 0.0f;
+                    if (x > 1.0f) x = 1.0f;
+                } else {
+                    // Zero-width range: surface already sends 0..1 — pass
+                    // through (no divide-by-zero).
+                    x = raw;
+                    if (x < 0.0f) x = 0.0f;
+                    if (x > 1.0f) x = 1.0f;
+                }
                 const std::string addr = "/chain/" + r.slot + "/" + r.param;
                 OscMsg out = OscMsg::make(addr);
-                for (float f : m.floats) {
-                    out.floats.push_back(f);
-                    out.typeTags.push_back('f');
-                }
+                out.floats.push_back(proxyCurveEval(r.curve, x));
+                out.typeTags.push_back('f');
+                // Non-float args pass through untouched (ints/strings keep
+                // their position in the message).
                 for (int32_t i : m.ints) {
                     out.ints.push_back(i);
                     out.typeTags.push_back('i');
@@ -284,7 +349,6 @@ int ProxyEngine::pump() {
                     ++forwarded_;
                 else
                     ++dropped_;
-                hit = true;
             }
             if (!hit) ++dropped_;
             continue;

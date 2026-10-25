@@ -7,13 +7,19 @@
 //   * 3-state mode button: OFF / ONLY-CONTROL / FULL
 //   * listen port (the port the surface / TouchOSC sends to)
 //   * up to 5 targets (ip / port / enabled)
-//   * up to 8 routes (surface addr -> target idx / slot / param)
+//   * up to 8 routes (surface addr -> target idx / slot / param), each with
+//     a value mapping: arg (which float of the surface message is the value),
+//     in_min / in_max (rescale to 0..1) and curve (identity/exp/invexp/scurve)
 //   * DISCOVER: query a target via the Heddle OSC protocol and list its
 //     slots/params; double-click a line to insert a route.
+//   * RECEIVED: live list of the addresses the proxy actually got from the
+//     surface (the "learn" list); double-click a line to fill a route row's
+//     surface address and arg index.
 //   * live counters (received / forwarded / dropped)
 //
 // The routing table is persisted in the plugin state (getStateInformation /
 // setStateInformation) so it follows the DAW's save.
+#include <cctype>
 #include <cmath>
 #include <string>
 
@@ -26,6 +32,7 @@ namespace heddle_proxy {
 // The OSC router types live in heddle (the JUCE-free core); pull them into
 // this namespace so the processor/editor can name them unqualified.
 using namespace heddle;
+using RecentMsg = heddle::ProxyEngine::RecentMsg;  // nested type, not covered by the using-directive
 
 // JUCE String from a std::string (String::fromUTF8 takes const char*; the
 // std::string ctor is not used so the char-set is explicit).
@@ -206,6 +213,54 @@ private:
 };
 
 // ===========================================================================
+// Received-address ("learn") list model (double-click fills a route row's
+// surface address + arg index)
+// ===========================================================================
+class RecentModel : public juce::ListBoxModel {
+public:
+    struct Entry {
+        std::string addr;
+        int numFloats = 0;
+    };
+    using FillCb = std::function<void(const std::string& /*addr*/, int /*numFloats*/)>;
+
+    int getNumRows() override { return (int) entries_.size(); }
+    void paintListBoxItem(int row, juce::Graphics& g, int, int height, bool) override {
+        if (row < 0 || row >= (int) entries_.size()) return;
+        const auto& e = entries_[row];
+        const juce::Colour accent(0xff34c3a4);
+        const juce::Colour text(0xffe9edf3);
+        const juce::Colour dim(0xff9aa5b4);
+        g.setColour(accent);
+        g.fillRect(6, (height - 8) / 2, 3, 8);
+        g.setColour(text);
+        g.setFont(juce::FontOptions("Segoe UI", 11.0f, juce::Font::plain));
+        g.drawText(jstr(e.addr), 16, 1, 2000, height, juce::Justification::left);
+        g.setColour(dim);
+        g.setFont(juce::FontOptions("Segoe UI", 10.0f, juce::Font::plain));
+        g.drawText(e.numFloats > 1 ? juce::String(e.numFloats) + " floats" : "1 float",
+                   16, 1, 2000, height, juce::Justification::right);
+    }
+    void listBoxItemDoubleClicked(int row, const juce::MouseEvent&) override {
+        if (row < 0 || row >= (int) entries_.size() || !fill_) return;
+        fill_(entries_[row].addr, entries_[row].numFloats);
+    }
+    void refresh(const std::vector<RecentMsg>& rec, juce::ListBox* list) {
+        list_ = list;
+        entries_.clear();
+        entries_.reserve(rec.size());
+        for (const auto& m : rec) entries_.push_back({m.addr, m.numFloats});
+        if (list != nullptr) list->updateContent();
+    }
+    void setFillCallback(FillCb cb) { fill_ = std::move(cb); }
+
+private:
+    std::vector<Entry> entries_;
+    FillCb fill_;
+    juce::ListBox* list_ = nullptr;
+};
+
+// ===========================================================================
 // Editor
 // ===========================================================================
 // Shared dark palette for the proxy editor. Every child gets its colours set
@@ -273,7 +328,7 @@ class ProxyEditor : public juce::AudioProcessorEditor,
 public:
     explicit ProxyEditor(ProxyProcessor& owner)
         : juce::AudioProcessorEditor(owner), owner_(owner) {
-        setSize(820, 700);
+        setSize(860, 700);
         toBack();
 
         title_ = new juce::Label("t", "Heddle Proxy - OSC fan-out");
@@ -317,6 +372,7 @@ public:
         buildTargets();
         buildRoutes();
         buildDiscover();
+        buildLearn();
 
         // Poll the live counters + status.
         startTimerHz(4);
@@ -326,7 +382,10 @@ public:
 
     ~ProxyEditor() override = default;
 
-    void timerCallback() override { refreshStatus(); }
+    void timerCallback() override {
+        refreshStatus();
+        refreshLearn();
+    }
 
     void paint(juce::Graphics& g) override {
         // Base background: flat base colour, with a subtle top gradient from
@@ -359,8 +418,9 @@ public:
         const int t0 = 78, tRowH = 30;
         const int r0 = t0 + 36 + ProxyConfig::kMaxTargets * tRowH + 10;
         g.fillRect(16, r0 - 12, getWidth() - 32, 1);
-        const int d0 = r0 + 36 + kMaxRoutes * 30 + 10;
+        const int d0 = r0 + 36 + kMaxRoutes * 36 + 10;
         g.fillRect(16, d0 - 12, getWidth() - 32, 1);
+        g.fillRect(668, d0 + 8, 1, 88);  // route table | learn panel
     }
 
     void resized() override {
@@ -370,12 +430,11 @@ public:
         if (title_ == nullptr || targetsHdr_ == nullptr ||
             routesHdr_ == nullptr || discLbl_ == nullptr)
             return;
-        const int W = getWidth();
         title_->setBounds(74, 14, 360, 22);
-        status_->setBounds(W - 332, 16, 316, 18);
+        status_->setBounds(getWidth() - 332, 16, 316, 18);
 
         mode_->setBounds(16, 62, 170, 30);
-        apply_->setBounds(W - 106, 62, 90, 30);
+        apply_->setBounds(getWidth() - 106, 62, 90, 30);
         listenLbl_->setBounds(200, 68, 96, 20);
         listenEd_->setBounds(300, 66, 74, 24);
 
@@ -393,31 +452,43 @@ public:
             targetPort_[i]->setBounds(242, y, 64, 24);
         }
 
-        // Routes block
+        // Routes block (row height 36: value/mapping controls under the addr row)
         const int r0 = t0 + 36 + ProxyConfig::kMaxTargets * tRowH + 10;
-        routesHdr_->setBounds(16, r0, 420, 16);
+        routesHdr_->setBounds(16, r0, 480, 16);
         rtColSrc_->setBounds(16, r0 + 18, 150, 14);
         rtColTgt_->setBounds(176, r0 + 18, 56, 14);
         rtColSlot_->setBounds(242, r0 + 18, 120, 14);
         rtColPar_->setBounds(372, r0 + 18, 140, 14);
-        const int rRowH = 30;
-        const int xSrc = 16, xTgt = 176, xSlot = 242, xParam = 372, xClr = 528;
+        rtColArg_->setBounds(528, r0 + 18, 40, 14);
+        rtColMM_->setBounds(572, r0 + 18, 70, 14);
+        rtColCv_->setBounds(648, r0 + 18, 56, 14);
+        const int rRowH = 36;
+        const int xSrc = 16, xTgt = 176, xSlot = 242, xParam = 372;
+        const int xArg = 528, xMin = 572, xMax = 606, xCurve = 648;
         for (int i = 0; i < kMaxRoutes; ++i) {
             const int y = r0 + 36 + i * rRowH;
             routeSrc_[i]->setBounds(xSrc, y, 150, 24);
             routeTgt_[i]->setBounds(xTgt, y, 56, 26);
             routeSlot_[i]->setBounds(xSlot, y, 120, 24);
             routeParam_[i]->setBounds(xParam, y, 140, 24);
-            routeClr_[i]->setBounds(xClr, y, 28, 26);
+            routeArg_[i]->setBounds(xArg, y, 36, 24);
+            routeMin_[i]->setBounds(xMin, y, 30, 24);
+            routeMax_[i]->setBounds(xMax, y, 38, 24);
+            routeCurve_[i]->setBounds(xCurve, y, 56, 26);
+            routeClr_[i]->setBounds(708, y, 48, 26);
         }
 
-        // Discover block
+        // Learn (received addresses) panel — right of the route table.
         const int d0 = r0 + 36 + kMaxRoutes * rRowH + 10;
-        discHdr_->setBounds(16, d0, 400, 16);
-        discBtn_->setBounds(16, d0 + 24, 120, 30);
-        discTgt_->setBounds(152, d0 + 24, 104, 28);
-        discList_->setBounds(16, d0 + 62, 300, 70);
-        discLbl_->setBounds(332, d0 + 62, W - 344, 70);
+        learnHdr_->setBounds(688, d0 + 8, 160, 16);
+        learnList_->setBounds(688, d0 + 28, 156, 68);
+
+        // Discover block
+        discHdr_->setBounds(16, d0 + 8, 400, 16);
+        discBtn_->setBounds(16, d0 + 32, 120, 30);
+        discTgt_->setBounds(152, d0 + 32, 104, 28);
+        discList_->setBounds(16, d0 + 70, 300, 70);
+        discLbl_->setBounds(332, d0 + 70, 320, 70);
     }
 
 private:
@@ -432,6 +503,60 @@ private:
         if (owner_.cfg_.mode == "off") owner_.cfg_.mode = "only-control";
         else if (owner_.cfg_.mode == "only-control") owner_.cfg_.mode = "full";
         else owner_.cfg_.mode = "off";
+    }
+
+    // ---- Value-mapping field helpers --------------------------------------
+    // The mapping inputs (arg / in_min / in_max) are free text; an empty or
+    // invalid field falls back to the route default so a half-typed row never
+    // breaks APPLY. Curves are a closed set, so the combo always yields one.
+    static int parseArg(const juce::String& s, int def) {
+        const juce::String t = s.trim();
+        if (t.isEmpty()) return def;
+        if (t[0] == '-' || t[0] == '+') return def;  // negative arg is invalid
+        for (int i = 0; i < t.length(); ++i)
+            if (!std::isdigit((unsigned char) t[i])) return def;
+        return t.getIntValue();
+    }
+    static double parseDbl(const juce::String& s, double def) {
+        const juce::String t = s.trim();
+        if (t.isEmpty()) return def;
+        bool ok = false;
+        for (int i = 0; i < t.length(); ++i) {
+            const char c = t[i];
+            if (c == '-' || c == '+' || c == '.' || (c >= '0' && c <= '9') ||
+                c == 'e' || c == 'E') { ok = true; }
+            else return def;
+        }
+        return ok ? (double) t.getDoubleValue() : def;
+    }
+    // 0 -> "0", 0.5 -> "0.5", 1 -> "1" (3-decimal format, trailing zeros trimmed).
+    static juce::String fmtDbl(double v) {
+        juce::String s = juce::String(v, 3);
+        while (s.endsWith("0")) s = s.dropLastCharacters(1);
+        if (s.endsWith(".")) s = s.dropLastCharacters(1);
+        return s;
+    }
+    // The curve combo offers identity/exp/invexp/scurve (ids 1..4); the enum
+    // has an extra `linear` alias at index 1, so the id<->enum mapping is
+    // explicit rather than an offset.
+    static ProxyCurve curveFromId(int id) {
+        switch (id) {
+            case 2: return ProxyCurve::exp;
+            case 3: return ProxyCurve::invexp;
+            case 4: return ProxyCurve::scurve;
+            case 1:
+            default: return ProxyCurve::identity;
+        }
+    }
+    static int idFromCurve(ProxyCurve c) {
+        switch (c) {
+            case ProxyCurve::exp: return 2;
+            case ProxyCurve::invexp: return 3;
+            case ProxyCurve::scurve: return 4;
+            case ProxyCurve::linear:
+            case ProxyCurve::identity:
+            default: return 1;
+        }
     }
 
     // ---- Shared control styling -------------------------------------------
@@ -497,6 +622,11 @@ private:
             r.targetIdx = ti;
             r.slot = slot.toStdString();
             r.param = param.toStdString();
+            // Value mapping (empty/invalid field -> route default).
+            r.arg = parseArg(routeArg_[i]->getText(), 0);
+            r.inMin = parseDbl(routeMin_[i]->getText(), 0.0);
+            r.inMax = parseDbl(routeMax_[i]->getText(), 1.0);
+            r.curve = curveFromId(routeCurve_[i]->getSelectedId());
             if (!r.slot.empty() && !r.param.empty())
                 rs.push_back(std::move(r));
         }
@@ -557,6 +687,15 @@ private:
         rtColPar_ = new juce::Label("rcp", "PARAM");
         styleFaintLabel(rtColPar_);
         addAndMakeVisible(rtColPar_);
+        rtColArg_ = new juce::Label("rca", "ARG");
+        styleFaintLabel(rtColArg_);
+        addAndMakeVisible(rtColArg_);
+        rtColMM_ = new juce::Label("rcmm", "MIN  MAX");
+        styleFaintLabel(rtColMM_);
+        addAndMakeVisible(rtColMM_);
+        rtColCv_ = new juce::Label("rcc", "CURVE");
+        styleFaintLabel(rtColCv_);
+        addAndMakeVisible(rtColCv_);
         // Target combo items: t0..t4.
         juce::StringArray titems;
         for (int i = 0; i < ProxyConfig::kMaxTargets; ++i) titems.add("t" + juce::String(i));
@@ -593,6 +732,34 @@ private:
             styleInput(routeParam_[i]);
             addAndMakeVisible(routeParam_[i]);
 
+            // Value mapping for this route (ARG / MIN / MAX / CURVE).
+            const ProxyRoute* rt = owner_.cfg_.routes.size() > i ? &owner_.cfg_.routes[i] : nullptr;
+            routeArg_[i] = new juce::TextEditor("ra" + juce::String(i));
+            routeArg_[i]->setText(rt ? juce::String(rt->arg) : juce::String("0"));
+            routeArg_[i]->setJustification(juce::Justification::centred);
+            styleInput(routeArg_[i]);
+            addAndMakeVisible(routeArg_[i]);
+
+            routeMin_[i] = new juce::TextEditor("rm" + juce::String(i));
+            routeMin_[i]->setText(rt ? fmtDbl(rt->inMin) : juce::String("0"));
+            routeMin_[i]->setJustification(juce::Justification::centred);
+            styleInput(routeMin_[i]);
+            addAndMakeVisible(routeMin_[i]);
+
+            routeMax_[i] = new juce::TextEditor("rxm" + juce::String(i));
+            routeMax_[i]->setText(rt ? fmtDbl(rt->inMax) : juce::String("1"));
+            routeMax_[i]->setJustification(juce::Justification::centred);
+            styleInput(routeMax_[i]);
+            addAndMakeVisible(routeMax_[i]);
+
+            routeCurve_[i] = new juce::ComboBox("rc" + juce::String(i));
+            static const char* kCurveNames[] = {"identity", "exp", "invexp", "scurve"};
+            for (int c = 0; c < 4; ++c) routeCurve_[i]->addItem(kCurveNames[c], c + 1);
+            const int cSel = rt ? idFromCurve(rt->curve) : 1;
+            routeCurve_[i]->setSelectedId(juce::jlimit(1, 4, cSel), juce::dontSendNotification);
+            styleCombo(routeCurve_[i]);
+            addAndMakeVisible(routeCurve_[i]);
+
             const int row = i;
             routeClr_[i] = new juce::TextButton("rx" + juce::String(i));
             routeClr_[i]->setButtonText("x");
@@ -604,6 +771,10 @@ private:
                 routeSlot_[row]->clear();
                 routeParam_[row]->clear();
                 routeTgt_[row]->setSelectedId(1, juce::dontSendNotification);
+                routeArg_[row]->setText(juce::String("0"));
+                routeMin_[row]->setText(juce::String("0"));
+                routeMax_[row]->setText(juce::String("1"));
+                routeCurve_[row]->setSelectedId(1, juce::dontSendNotification);
             };
             addAndMakeVisible(routeClr_[i]);
         }
@@ -678,12 +849,65 @@ private:
         addAndMakeVisible(discLbl_);
     }
 
+    // ---- Learn panel -------------------------------------------------------
+    // RECEIVED lists the OSC addresses the proxy has actually seen from the
+    // surface (newest first, deduped) — so a user never has to guess what
+    // TouchOSC sends. Double-click a line to fill the next empty route row's
+    // SURFACE ADDR and ARG (arg = 1 when the message carries several floats,
+    // so a multi-value control is routed on its second value — adjust if the
+    // first float is the value you want).
+    void buildLearn() {
+        learnHdr_ = new juce::Label("lh", "RECEIVED (double-click to use)");
+        styleFaintLabel(learnHdr_);
+        addAndMakeVisible(learnHdr_);
+
+        learnList_ = new juce::ListBox("rl", &learnModel_);
+        learnList_->setRowHeight(16);
+        styleList(learnList_);
+        learnModel_.setFillCallback([this](const std::string& addr, int numFloats) {
+            int row = -1;
+            for (int i = 0; i < kMaxRoutes; ++i) {
+                if (routeSrc_[i]->getText().trim().isEmpty() &&
+                    routeSlot_[i]->getText().trim().isEmpty() &&
+                    routeParam_[i]->getText().trim().isEmpty()) { row = i; break; }
+            }
+            if (row < 0) {  // table full: reuse the first row (keep its mapping)
+                row = 0;
+                routeSlot_[row]->clear();
+                routeParam_[row]->clear();
+            }
+            routeSrc_[row]->setText(jstr(addr));
+            routeArg_[row]->setText(juce::String(numFloats > 1 ? 1 : 0));
+            status_->setText("route filled from RECEIVED - press APPLY",
+                             juce::dontSendNotification);
+        });
+        addAndMakeVisible(learnList_);
+    }
+
     void refreshStatus() {
         const auto& cfg = owner_.cfg_;
         status_->setText(owner_.statusMsg_ + "   |   rec " + juce::String(owner_.engine_.received()) +
                             "  fwd " + juce::String(owner_.engine_.forwarded()) +
                             "  drop " + juce::String(owner_.engine_.dropped()),
                          juce::dontSendNotification);
+    }
+
+    // Poll the engine's received-address list and refresh the learn panel only
+    // when it changed (the list is bounded and deduped, so comparison is cheap
+    // and keeps the ListBox from redrawing every 250 ms tick).
+    void refreshLearn() {
+        const std::vector<RecentMsg> rec = owner_.engine_.recent();
+        std::string sig;
+        sig.reserve(rec.size() * 28);
+        for (const auto& m : rec) {
+            sig += m.addr;
+            sig += "|";
+            sig += std::to_string(m.numFloats);
+            sig += ";";
+        }
+        if (sig == lastLearnSig_) return;
+        lastLearnSig_ = std::move(sig);
+        learnModel_.refresh(rec, learnList_);
     }
 
     ProxyProcessor& owner_;
@@ -707,10 +931,17 @@ private:
     juce::Label* rtColTgt_ = nullptr;
     juce::Label* rtColSlot_ = nullptr;
     juce::Label* rtColPar_ = nullptr;
+    juce::Label* rtColArg_ = nullptr;
+    juce::Label* rtColMM_ = nullptr;
+    juce::Label* rtColCv_ = nullptr;
     juce::TextEditor* routeSrc_[kMaxRoutes] = {};
     juce::ComboBox* routeTgt_[kMaxRoutes] = {};
     juce::TextEditor* routeSlot_[kMaxRoutes] = {};
     juce::TextEditor* routeParam_[kMaxRoutes] = {};
+    juce::TextEditor* routeArg_[kMaxRoutes] = {};
+    juce::TextEditor* routeMin_[kMaxRoutes] = {};
+    juce::TextEditor* routeMax_[kMaxRoutes] = {};
+    juce::ComboBox* routeCurve_[kMaxRoutes] = {};
     juce::Button* routeClr_[kMaxRoutes] = {};
 
     juce::Button* discBtn_ = nullptr;
@@ -719,6 +950,11 @@ private:
     juce::ListBox* discList_ = nullptr;
     juce::Label* discLbl_ = nullptr;
     DiscoveredModel discModel_;
+
+    juce::Label* learnHdr_ = nullptr;
+    juce::ListBox* learnList_ = nullptr;
+    RecentModel learnModel_;
+    std::string lastLearnSig_;
 };
 
 // Out-of-line definition: ProxyEditor is complete here.
