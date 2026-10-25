@@ -3,6 +3,14 @@
 Transport: **OSC 1.0 over UDP** (the same framing works over TCP).
 Types used: `f` (float32), `i` (int32), `s` (string), `b` (blob).
 
+**Wire framing:** each datagram is a **4-byte big-endian total-length
+header followed by the OSC 1.0 message** (address, type tags, args — see
+`heddle::oscEncode`/`oscDecode` in `core/src/osc.cpp`). This is NOT
+plain OSC 1.0: external senders that emit bare OSC datagrams (no length
+header) fail to decode and are **dropped silently** — no error, no
+counter. When building test packets or external clients, link against the
+core and encode with `heddle::oscEncode` rather than hand-rolling bytes.
+
 The Heddle host listens on a configurable port (default `9001`) and optionally
 sends replies to the client's source address.
 

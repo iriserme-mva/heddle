@@ -83,6 +83,33 @@ Third-party headers (`nlohmann/json`, `doctest`) are vendored under
 
 CI runs the same steps on GitHub Actions (see `.github/workflows/ci.yml`).
 
+**Workflow conventions (enforced):**
+- Every commit is tracked to CI green. Code pushes run the full 6-job
+  matrix (~10–17 min); docs-only pushes run just the ~30 s `paths_filter`
+  gate job (since `4bfd375`).
+- Push over the SSH key (`git push origin main`); a PAT in the URL is a
+  fallback, not the default.
+- **Code-only on GitHub**: no prebuilt binaries in commits, releases, or
+  release artefacts (see [License](#license) for why).
+- Local build output is tee'd to a log; never trust an exit code that came
+  through a `tail`/`grep` pipe.
+
+### Path style (Windows)
+
+Two path forms coexist and must not be mixed within one call:
+
+- **MSYS/git-bash** (`cd`, `ls`, `grep`, MSYS cmake, ctest): POSIX style —
+  `/d/Hermes/MV/projects/heddle`, `./build/…`.
+- **Native Windows processes** (any `.exe`, MSYS python, CMake cache values):
+  forward-slash Windows style — `D:/Hermes/MV/projects/heddle`. Passing a
+  `/d/…` path to a Windows process fails silently or with "file not found";
+  passing `/c/Users/…` to MSYS python mangles it into `D:\c\Users\…`.
+
+Practical rules: `cmake -B build` stays relative; CMake
+`IMPORTED_LOCATION`/`add_library(... IMPORTED)` entries use `D:/…`; scripts
+and exes take `D:/…` arguments. One rule of thumb — the *receiver* of the
+path decides the format.
+
 ## Building the host + render CLI
 
 The JUCE host layer is opt-in (it fetches JUCE 8.0.4 at configure time, so
@@ -231,6 +258,10 @@ heddle/
 - [docs/PERFORMANCE.md](docs/PERFORMANCE.md) — OSC/ring performance results + harness
 - [docs/PROXY.md](docs/PROXY.md) — heddle-proxy: fan one OSC surface to up to 5 Heddle targets
 - [docs/LOOKAHEAD.md](docs/LOOKAHEAD.md) — offline vs live scheduling & the 2-block lookahead
+
+Build and workflow conventions (path style, build-tree hygiene, CI
+gating, push rules) for anyone — human or agent — working in this repo
+live in [STATUS.md, "Conventions for agents working on this repo"](STATUS.md#conventions-for-agents-working-on-this-repo).
 
 ## Prior art
 

@@ -176,9 +176,40 @@ current after every session** — last section first.
 | perf: `heddle_osc_perf` (core OSC benchmark, no JUCE) + `heddle-osc-perf-host` (OSC vs real live host) | ✅ **CI GREEN** (run 39054404258, all 6 jobs): core set path 0.22 µs/4.7 Msets/s, UDP loopback RTT ~16 µs; host drain floor ~23.6 ms, ~1 ksets/s max reliable, audio deficit <2 % below ceiling; `docs/PERFORMANCE.md` written; both wired into CI (continue-on-error, reports archived as artifacts) |
 | audio: sample-level loss proof — `heddle-osc-loss-test` + lock-free host rework | ✅ **CI GREEN** (run 39286419395, all 6 jobs, `ffea44f`): rectangular 4096-sample loop (1024·0 + 2048·(−1.5) + 1024·0) streamed through the live host + identity smoke VST3, compared sample-for-sample: **0 samples lost in ALL 8 phases (baseline + 50…10,000 sets/s)**; offset constant 1024 s (21.33 ms) at every rate; control kick-in median 42.7 ms (≤ 2 blocks). Host pump reworked: lock-free AudioRing drain + output backpressure + absolute-schedule busy-spin pacing (no catch-up bursts) |
 | licensing: Heddle License (owner commercial, third parties non-commercial) | ✅ **CI GREEN** (run 39286419395, `34e008a`): root `LICENSE` + `core/LICENSE` rewritten (custom header + GPL-3.0 reference text); owner (Mykhailo) retains irrevocable commercial rights, all others restricted to non-commercial (personal/academic/research); commercial use by others requires a written licence (neworldemancer@gmail.com); README + docs/ARCHITECTURE re-synced, zero MIT references remain |
+| proxy: per-route value mapping (`arg`/`in_min`/`in_max`/`curve`) + RECEIVED learn list | ✅ **CI GREEN** (run 40152029920, all 6 jobs, `472925d`): per-route `ProxyCurve` (identity/exp/invexp/scurve, `linear` alias) + `in_min`/`in_max` rescale in `pump()` (reversed range inverts; zero-width clamped pass-through); multi-`arg` float select; `RecentMsg` learn list (cap, `recent()`, cleared on `stop()`); editor UI (ARG/MIN/MAX/CURVE columns + RECEIVED panel, signature-gated refresh, explicit `curveFromId`/`idFromCurve`); CLI help; docs/PROXY.md + docs/OSC.md wire-framing note; core 73/73, 1847/1847 assertions |
 
 ## Log
 
+- **2026-10-25** — **Proxy per-route value mapping + RECEIVED learn list. Committed `472925d`, CI GREEN (run 40152029920, all 6 jobs).**
+  (a) *Per-route value mapping*: `ProxyCurve` (identity/exp/invexp/scurve +
+  `linear` alias at enum index 1) in `proxy.hpp`; `ProxyRoute` gains `arg`
+  (multi-float select), `in_min`/`in_max` (rescale; reversed range inverts,
+  zero-width = clamped pass-through, guarded `inMax != inMin`), `curve`.
+  Mapping runs in `pump()` before forwarding; `routeFromJson`/dump/
+  validation extended. `--route` CLI stays 4 args — mapping is
+  config-file/editor only.
+  (b) *RECEIVED learn list*: `RecentMsg` (addr + numFloats) + `kMaxRecent`
+  cap in `proxy_engine.hpp`, `recent()` accessor, recorded for all messages
+  before routing in all modes, cleared on `stop()`. Editor RECEIVED panel
+  (`RecentModel`, signature-gated `refreshLearn()` — skips redraw when the
+  `addr|numFloats;` signature is unchanged); double-click fills the next
+  all-empty row (src+slot+param), `arg = 1 if numFloats > 1 else 0`.
+  (c) *Editor UI*: ARG/MIN/MAX/CURVE columns (rowH 36, 860×700); curve combo
+  ids 1..4 = identity/exp/invexp/scurve with EXPLICIT `curveFromId`/
+  `idFromCurve` switches (no offset math — enum has the `linear` alias at
+  index 1).
+  (d) *Docs*: docs/PROXY.md (value-mapping section, CLI note, editor steps,
+  file map); docs/OSC.md wire-framing note (4-byte BE length header — NOT
+  plain OSC; external senders without it are dropped silently; build test
+  packets with `heddle::oscEncode`).
+  (e) *Capture harness verified* (`scratch/proxy_shot`, compiles
+  `plugin.cpp` directly): rec 3 / fwd 1 / drop 2, LEARN rows = 3 (/gain,
+  /xy, /rev), row 1 filled (smoke1/Gain/exp). Debugged two traps:
+  (i) hand-built OSC lacked the length header → `oscDecode` silent drop →
+  switched to core `oscEncode`; (ii) stale pre-feature `heddle_core.lib`
+  (Oct 23) linked into the harness → rebuilt a fresh Release lib
+  (`build-core-mapping-vslib`) and repointed `IMPORTED_LOCATION`. Core 73/73,
+  1847/1847 assertions.
 - **2026-10-21** — **In-block OSC curve scheduling: sample-accurate, 0 lost (18-config sweep) + dynamic automation rate + param suppression + docs re-sync. Committed, CI pending.**
   (a) *In-block scheduler* (built over prior session): an OSC set in
   `heddle-host` is a **waypoint** (default mode; `--no-inblock` = legacy
@@ -841,12 +872,46 @@ current after every session** — last section first.
 ## Conventions for agents working on this repo
 
 1. **This file is the source of truth** for progress. Update the "Current
-   state" table and append a dated log entry at the end of every session.
+   state" table and append a dated log entry at the top of the Log on every
+   session.
 2. Commit every substantial change with a clear message; no giant squashed
-   commits.
+   commits. Track every commit to CI green before closing work.
 3. Tests must stay targeted and meaningful — do NOT add filler tests to look
    productive. Keep `ctest` green before committing test-affecting changes.
-4. Core stays platform-agnostic C++17, MIT, no plugin SDK dependencies.
+4. Core stays platform-agnostic C++17, no plugin SDK dependencies.
    Plugin SDK work happens in `host/` (JUCE) only.
 5. Never commit secrets. Never push to anything but this repo's `main`.
 6. If blocked, record it in the table with the reason — do not silently stop.
+7. **Path style (Windows) — the receiver decides the format** (full table in
+   the Hermes `heddle-project-ops` skill, "Path style (canonical)";
+   also [README](README.md#path-style-windows)):
+   - git-bash / MSYS tools (`cd`, `grep`, MSYS cmake, ctest): POSIX form —
+     `/d/Hermes/MV/projects/heddle`, `./build/…`.
+   - Native Windows processes (any `.exe`, MSYS python, CMake cache
+     `IMPORTED_LOCATION` values): forward-slash Windows form —
+     `D:/Hermes/MV/projects/heddle`. A `/d/…` path to an exe fails with
+     "file not found"; a `/c/…` path to python mangles into
+     `D:\c\Users\…`.
+   - `cmake -B build` stays relative; the VS-bundled CMake binary is
+     invoked by quoted MSYS path.
+8. **Build-tree hygiene:** one CMake generator per build tree — check
+   `CMAKE_COMMAND:` in `CMakeCache.txt` before building (an MSYS cmake
+   `--build` on a VS-configured tree corrupts the reconfigure). Fresh
+   unique build dirs for experiments; never `rm -rf` an old one under the
+   project dir. VS multi-config output lives in `<build_dir>/<config>/`
+   (e.g. `Release/heddle_core.lib`), not the build root.
+9. **Stale prebuilt artifacts:** any harness/tool linking a prebuilt
+   `heddle_core.lib`/`.dll` must re-link against a lib rebuilt *after* the
+   last core change, or it silently runs old behaviour (check the mtime
+   before theorising about source).
+10. **OSC wire framing:** datagrams = 4-byte big-endian length header +
+    OSC 1.0 body (see [docs/OSC.md](docs/OSC.md)); external senders
+    emitting bare OSC are dropped silently. Build test packets with
+    `heddle::oscEncode` — never hand-rolled bytes.
+11. **Log discipline:** tee full build/test output to a log; never trust an
+    exit code piped through `tail`/`grep` — capture it explicitly
+    (`BUILD_EXIT=$?`) and `grep -cE "error C|error LNK|error MSB"` the log.
+12. **Push:** SSH key is the standing path (`git push origin main`); a PAT
+    in the URL is a fallback only. Code-only on GitHub — no binaries in
+    commits, releases, or workflow artefacts (why: the
+    [License](README.md#license) section in README).
