@@ -55,14 +55,28 @@
 
     <!-- Editable VST3 plugin location. Default = the machine-wide VST3
          discovery folder (C:\Program Files\Common Files\VST3). The user can
-         point it at their own VST3 location (e.g. their DAW's Plugins\VST3).
-         NOTE: [ProgramFiles64Folder] in a Property value is not expanded at
-         candle time (CNDL1077) - the value is stored and the standard folder
-         reference resolves when the directory Name=[VST3PLUGINSDIR] is
-         evaluated at install time, which is exactly what we want. A plain
-         Property alone would NOT render in the UI; the HeddleInstallDirDlg
-         dialog below is what makes the field visible. -->
-    <Property Id="VST3PLUGINSDIR" Value="[ProgramFiles64Folder]Common Files\VST3"/>
+         point it at their own VST3 location (e.g. their DAW's Plugins\VST3,
+         on any drive) by typing or browsing in the installer UI.
+
+         MECHANISM (stock WIXUI_INSTALLDIR pattern, verified empirically):
+         - VST3DIR carries a STATIC relative DefaultDir "Common Files\VST3"
+           under ProgramFiles64Folder -> costs to C:\Program Files\Common
+           Files\VST3 with no property involved. (Lesson from a real
+           failure: a Property Value is stored VERBATIM and never expands
+           folder refs - CNDL1077 / Error1314 - and a Directory
+           Name="[PROP]" does NOT reliably re-root to the property either.
+           So no property reference may appear in DefaultDir.)
+         - VST3PLUGINSDIR holds the directory ID "VST3DIR" (exactly like
+           WIXUI_INSTALLDIR holds "INSTALLDIR"). The dialog's VST3 field is
+           a PathEdit Indirect to it, so it shows the engine-resolved path
+           and typing/browsing updates VST3DIR's TARGET PATH via the
+           standard SetTargetPath [_BrowseProperty] mechanism - which is
+           what lets the user pick any absolute location (any drive).
+         - Browse reuses the STOCK BrowseDlg (its OK runs
+           SetTargetPath [_BrowseProperty] i.e. the directory NAMED by
+           _BrowseProperty, so with _BrowseProperty=VST3PLUGINSDIR it can
+           not clobber the install directory). -->
+    <Property Id="VST3PLUGINSDIR" Value="VST3DIR"/>
 
     <UIRef Id="WixUI_InstallDir"/>
 
@@ -94,11 +108,18 @@
         <Control Id="Folder" Type="PathEdit" X="20" Y="80" Width="320" Height="18" Property="WIXUI_INSTALLDIR" Indirect="yes"/>
         <Control Id="ChangeFolder" Type="PushButton" X="20" Y="100" Width="56" Height="17" Text="!(loc.InstallDirDlgChange)"/>
 
-        <!-- === Heddle addition: second field for the VST3 plugin folder === -->
+        <!-- === Heddle addition: second field for the VST3 plugin folder ===
+             Stock WIXUI_INSTALLDIR pattern: the field is Indirect to
+             VST3PLUGINSDIR (which holds the directory ID "VST3DIR"), so it
+             shows the engine-resolved default path (C:\Program Files\Common
+             Files\VST3) and a typed path is written back to the property,
+             re-rooted by SetTargetPath on Next (Order 2 below). Browse
+             retargets the STOCK BrowseDlg via _BrowseProperty - its OK runs
+             SetTargetPath [_BrowseProperty] = VST3DIR, never INSTALLDIR. -->
         <Control Id="VST3Label" Type="Text" X="20" Y="135" Width="290" Height="18" NoPrefix="yes" Text="VST3 plugin folder (browse or type your own path; 32-bit DAWs need a path inside Program Files (x86)):"/>
-        <Control Id="VST3Folder" Type="PathEdit" X="20" Y="155" Width="320" Height="18" Property="VST3PLUGINSDIR"/>
+        <Control Id="VST3Folder" Type="PathEdit" X="20" Y="155" Width="320" Height="18" Property="VST3PLUGINSDIR" Indirect="yes"/>
         <Control Id="ChangeVST3" Type="PushButton" X="20" Y="175" Width="56" Height="17" Text="!(loc.InstallDirDlgChange)" ToolTip="Browse for the VST3 plugin folder">
-          <Publish Property="_BrowseProperty" Value="VST3PLUGINSDIR" Order="1">1</Publish>
+          <Publish Property="_BrowseProperty" Value="[VST3PLUGINSDIR]" Order="1">1</Publish>
           <Publish Event="SpawnDialog" Value="BrowseDlg" Order="2">1</Publish>
         </Control>
       </Dialog>
@@ -110,12 +131,15 @@
            condition at Order 10 so they execute last and win (last NewDialog
            in an event sequence is the one opened). The stock InstallDirDlg
            stays in the package, merely never opened. -->
-      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="HeddleInstallDirDlg" Order="10">LicenseAccepted = "1"</Publish>
-      <Publish Dialog="HeddleInstallDirDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg">1</Publish>
+           <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="HeddleInstallDirDlg" Order="10">LicenseAccepted = "1"</Publish>
+           <Publish Dialog="HeddleInstallDirDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg">1</Publish>
       <Publish Dialog="HeddleInstallDirDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1">1</Publish>
-      <Publish Dialog="HeddleInstallDirDlg" Control="Next" Event="DoAction" Value="WixUIValidatePath" Order="2">NOT WIXUI_DONTVALIDATEPATH</Publish>
-      <Publish Dialog="HeddleInstallDirDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="3"><![CDATA[NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID<>"1"]]></Publish>
-      <Publish Dialog="HeddleInstallDirDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4">WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID="1"</Publish>
+      <!-- Re-root VST3DIR at the path shown in its field (default or
+           user-typed), same pattern as the install-dir row above. -->
+      <Publish Dialog="HeddleInstallDirDlg" Control="Next" Event="SetTargetPath" Value="[VST3PLUGINSDIR]" Order="2">1</Publish>
+      <Publish Dialog="HeddleInstallDirDlg" Control="Next" Event="DoAction" Value="WixUIValidatePath" Order="3">NOT WIXUI_DONTVALIDATEPATH</Publish>
+      <Publish Dialog="HeddleInstallDirDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="4"><![CDATA[NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID<>"1"]]></Publish>
+      <Publish Dialog="HeddleInstallDirDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="5">WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID="1"</Publish>
       <Publish Dialog="HeddleInstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1">1</Publish>
       <Publish Dialog="HeddleInstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2">1</Publish>
       <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="HeddleInstallDirDlg" Order="10">NOT Installed</Publish>
@@ -152,7 +176,15 @@
           </Component>
         </Directory>
 
-        <Directory Id="VST3DIR" Name="[VST3PLUGINSDIR]">
+        <!-- Multi-level relative default expressed as nested directories
+             (a single Directory/@Name may not contain a separator).
+             VST3DIR is the re-rootable node: SetTargetPath
+             [VST3PLUGINSDIR] replaces its target path with whatever the
+             user typed/browsed. The "Common Files" parent carries no
+             components, so it is never created on disk when VST3DIR is
+             re-rooted elsewhere. -->
+        <Directory Id="COMMONFILES" Name="Common Files">
+          <Directory Id="VST3DIR" Name="VST3">
             <Directory Id="VST3PROXY" Name="HeddleProxy.vst3">
               <Directory Id="VST3PROXYC" Name="Contents">
                 <Directory Id="VST3PROXYW" Name="x86_64-win">
@@ -197,6 +229,7 @@
                 </Directory>
               </Directory>
             </Directory>
+          </Directory>
         </Directory>
       </Directory>
 

@@ -8,6 +8,9 @@ build-*/
 # release packaging artifacts (staged by scripts/build_package.ps1; not committed)
 dist/
 installer/obj/
+uiout/
+*.wixobj
+heddle-0.1.8-win-x64.wxs
 *.wixpdb
 
 # object / binary artifacts
