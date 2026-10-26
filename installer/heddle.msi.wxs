@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Heddle Windows MSI (WiX 3.14, per-machine, x64).
+
+  Installs:
+    C:\Program Files\Heddle_v0.1.8\
+        bin\      heddle-host.exe, heddle-render.exe, heddle-proxy.exe
+        LICENSE, README.txt
+    C:\Program Files\Common Files\VST3\     <- machine-wide VST3 discovery folder
+        HeddleProxy.vst3\, HeddleSmokePlugin.vst3\, HeddleBridge.vst3\, HeddleProbeAudio.vst3\
+
+  Start menu:  Start > All Programs > Heddle_v0.1.8 >
+                  Heddle Host / Heddle Render / Heddle Proxy
+  Install is per-machine (UAC elevation on double-click is normal for Program Files);
+  uninstall via Settings > Apps > Heddle.
+
+  Build (HEDDLE_SRC = staged dist folder; scripts/build_package.ps1 runs exactly this):
+    candle.exe -arch x64 -dHEDDLE_SRC="<dist>" installer\heddle.msi.wxs -out installer\obj\heddle.wixobj
+    light.exe  installer\obj\heddle.wixobj -ext WixUIExtension -ext WixUtilExtension -out <dist>\heddle-0.1.8-win-x64.msi
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+
+  <Product Id="*"
+           Name="Heddle"
+           Version="0.1.8.0"
+           Manufacturer="iriserme-mva"
+           Language="1033"
+           UpgradeCode="7A1B6E52-9C3F-4D2A-B4E1-6F0D5C8A3E91">
+
+    <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine"
+             Description="Heddle 0.1.8 - audio chain host, offline renderer, OSC proxy and VST3 plugins"
+             Comments="Personal / non-commercial use. Licence: see LICENSE in the install folder."/>
+
+    <MediaTemplate EmbedCab="yes"/>
+
+    <Icon Id="hosticon" SourceFile="$(var.HEDDLE_SRC)\bin\heddle-host.exe"/>
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Heddle is already installed."/>
+
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR"/>
+    <UIRef Id="WixUI_InstallDir"/>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <!-- ProgramFiles64Folder: in a 64-bit package ProgramFilesFolder is
+           ALWAYS the 32-bit "Program Files" (WoW64 view); ProgramFiles64Folder
+           is the true 64-bit Program Files. Using the 64-bit folder is what
+           makes the directory tree 64-bit so -arch x64 components (attrs=256)
+           pass ICE80. On a 64-bit OS it resolves to C:\Program Files. -->
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLDIR" Name="Heddle_v0.1.8">
+          <Directory Id="BINDIR" Name="bin">
+            <Component Id="cmpHost" Guid="*">
+              <File Id="fHost" Source="$(var.HEDDLE_SRC)\bin\heddle-host.exe"
+                    KeyPath="yes" Checksum="yes"/>
+            </Component>
+            <Component Id="cmpRender" Guid="*">
+              <File Id="fRender" Source="$(var.HEDDLE_SRC)\bin\heddle-render.exe"
+                    KeyPath="yes" Checksum="yes"/>
+            </Component>
+            <Component Id="cmpProxy" Guid="*">
+              <File Id="fProxy" Source="$(var.HEDDLE_SRC)\bin\heddle-proxy.exe"
+                    KeyPath="yes" Checksum="yes"/>
+            </Component>
+          </Directory>
+
+          <Component Id="cmpDocs" Guid="432FB8B9-4861-4093-A6A8-2C01D535EE41">
+            <File Id="fLicense" Source="$(var.HEDDLE_SRC)\LICENSE"
+                  KeyPath="yes" Checksum="yes"/>
+            <File Id="fReadme" Source="$(var.HEDDLE_SRC)\README.txt"/>
+            <RemoveFolder Id="CleanBinDir" Directory="BINDIR" On="uninstall"/>
+          </Component>
+        </Directory>
+
+        <Directory Id="COMMONFILES" Name="Common Files">
+          <Directory Id="VST3DIR" Name="VST3">
+            <Directory Id="VST3PROXY" Name="HeddleProxy.vst3">
+              <Directory Id="VST3PROXYC" Name="Contents">
+                <Directory Id="VST3PROXYW" Name="x86_64-win">
+                  <Component Id="cmpProxyVst" Guid="E58F85BD-7A4D-49B6-911B-9AE0D39F0CEC">
+                    <File Source="$(var.HEDDLE_SRC)\plugins\HeddleProxy.vst3\Contents\x86_64-win\HeddleProxy.vst3"
+                          KeyPath="yes" Checksum="yes"/>
+                    <RemoveFolder Id="CleanVst3Proxy" Directory="VST3PROXY" On="uninstall"/>
+                  </Component>
+                </Directory>
+              </Directory>
+            </Directory>
+            <Directory Id="VST3SMOKE" Name="HeddleSmokePlugin.vst3">
+              <Directory Id="VST3SMOKEC" Name="Contents">
+                <Directory Id="VST3SMOKEW" Name="x86_64-win">
+                  <Component Id="cmpSmokeVst" Guid="B309FC5E-0193-42E5-995F-0A2D4C002B0B">
+                    <File Source="$(var.HEDDLE_SRC)\plugins\HeddleSmokePlugin.vst3\Contents\x86_64-win\HeddleSmokePlugin.vst3"
+                          KeyPath="yes" Checksum="yes"/>
+                    <RemoveFolder Id="CleanVst3Smoke" Directory="VST3SMOKE" On="uninstall"/>
+                  </Component>
+                </Directory>
+              </Directory>
+            </Directory>
+            <Directory Id="VST3BRIDGE" Name="HeddleBridge.vst3">
+              <Directory Id="VST3BRIDGEC" Name="Contents">
+                <Directory Id="VST3BRIDGEW" Name="x86_64-win">
+                  <Component Id="cmpBridgeVst" Guid="D7BBAEBC-CC88-4177-BE99-D2FEEF87C67B">
+                    <File Source="$(var.HEDDLE_SRC)\plugins\HeddleBridge.vst3\Contents\x86_64-win\HeddleBridge.vst3"
+                          KeyPath="yes" Checksum="yes"/>
+                    <RemoveFolder Id="CleanVst3Bridge" Directory="VST3BRIDGE" On="uninstall"/>
+                  </Component>
+                </Directory>
+              </Directory>
+            </Directory>
+            <Directory Id="VST3PROBE" Name="HeddleProbeAudio.vst3">
+              <Directory Id="VST3PROBEC" Name="Contents">
+                <Directory Id="VST3PROBEW" Name="x86_64-win">
+                  <Component Id="cmpProbeVst" Guid="3553B4D7-5AC2-42FE-98D7-489B9B32B8F8">
+                    <File Source="$(var.HEDDLE_SRC)\plugins\HeddleProbeAudio.vst3\Contents\x86_64-win\HeddleProbeAudio.vst3"
+                          KeyPath="yes" Checksum="yes"/>
+                    <RemoveFolder Id="CleanVst3Probe" Directory="VST3PROBE" On="uninstall"/>
+                  </Component>
+                </Directory>
+              </Directory>
+            </Directory>
+          </Directory>
+        </Directory>
+      </Directory>
+
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="MENUROOT" Name="Heddle_v0.1.8">
+          <Component Id="cmpMenu" Guid="75BB8473-6F14-4923-9374-A26DCC44E8B2">
+            <!-- ICE43: a non-advertised shortcut component must key on an
+                 HKCU registry key, not a file. -->
+            <RegistryKey Root="HKCU" Key="Software\Heddle">
+              <RegistryValue Name="InstalledVersion" Type="string" Value="0.1.8"/>
+            </RegistryKey>
+            <Shortcut Id="MenuHost" Name="Heddle Host"
+                      Target="[BINDIR]heddle-host.exe"
+                      WorkingDirectory="BINDIR"
+                      Icon="hosticon"
+                      Description="Heddle standalone live host (chain + OSC control)"/>
+            <Shortcut Id="MenuRender" Name="Heddle Render"
+                      Target="[BINDIR]heddle-render.exe"
+                      WorkingDirectory="BINDIR"
+                      Description="Heddle offline audio renderer"/>
+            <Shortcut Id="MenuProxy" Name="Heddle Proxy"
+                      Target="[BINDIR]heddle-proxy.exe"
+                      WorkingDirectory="BINDIR"
+                      Description="Heddle OSC router / proxy (TouchOSC + DAW bridge)"/>
+            <RemoveFolder Id="CleanMenuDir" Directory="MENUROOT" On="uninstall"/>
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="Main" Title="Heddle" Level="1" Display="expand" AllowAdvertise="no">
+      <Feature Id="FeatureExes" Title="Executables (host / render / proxy)" Level="1">
+        <ComponentRef Id="cmpHost"/>
+        <ComponentRef Id="cmpRender"/>
+        <ComponentRef Id="cmpProxy"/>
+        <ComponentRef Id="cmpDocs"/>
+      </Feature>
+      <Feature Id="FeaturePlugins" Title="VST3 plugins (installed to Common Files\VST3)" Level="1">
+        <ComponentRef Id="cmpProxyVst"/>
+        <ComponentRef Id="cmpSmokeVst"/>
+        <ComponentRef Id="cmpBridgeVst"/>
+        <ComponentRef Id="cmpProbeVst"/>
+      </Feature>
+      <Feature Id="FeatureMenu" Title="Start menu links" Level="1">
+        <ComponentRef Id="cmpMenu"/>
+      </Feature>
+    </Feature>
+  </Product>
+</Wix>

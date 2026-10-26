@@ -5,6 +5,11 @@ build_stale_*/
 cmake-build-*/
 build-*/
 
+# release packaging artifacts (staged by scripts/build_package.ps1; not committed)
+dist/
+installer/obj/
+*.wixpdb
+
 # object / binary artifacts
 *.o
 *.obj
