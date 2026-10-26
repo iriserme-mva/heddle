@@ -6,11 +6,22 @@
     C:\Program Files\Heddle_v0.1.8\            (install dir, editable in the installer UI)
         bin\      heddle-host.exe, heddle-render.exe, heddle-proxy.exe
         LICENSE, README.txt
-    [VST3PLUGINSDIR]\                          plugin dir, editable in the installer UI
-        default "Common Files\VST3" (=> C:\Program Files\Common Files\VST3, the
-        machine-wide VST3 discovery folder); the user can point it at any
-        existing VST3 location instead
+    [VST3DIR]\                                 plugin dir, EDITABLE FIELD in the installer UI
+        default "Common Files\VST3" relative to C:\ (=> C:\Program Files\Common Files\VST3,
+        the machine-wide VST3 discovery folder). The user can browse/type any existing
+        VST3 location (e.g. their DAW's Plugins\VST3). NOTE: for 32-bit-only DAWs use a
+        path inside "Program Files (x86)", since they only scan their own half.
         HeddleProxy.vst3\, HeddleSmokePlugin.vst3\, HeddleBridge.vst3\, HeddleProbeAudio.vst3\
+
+  The standard WixUI_InstallDir reference only has ONE directory field, so the
+  install flow is extended: a second dialog (HeddleInstallDirDlg, a NEW Id - the
+  stock InstallDirDlg Id cannot be redefined while WixUIExtension is loaded,
+  light would link both copies and fail with LGHT0091) shows the install folder
+  PLUS the VST3 plugin folder as an editable field + browse button (the browse
+  button reuses the stock BrowseDlg via the standard _BrowseProperty switch).
+  The stock routing is republished (LicenseAgreementDlg Next / VerifyReadyDlg
+  Back point at HeddleInstallDirDlg) so the flow goes through the extended
+  dialog; the stock InstallDirDlg stays in the package, merely unrouted.
 
   Start menu:  Start > All Programs > Heddle_v0.1.8 >
                   Heddle Host / Heddle Render / Heddle Proxy
@@ -41,12 +52,74 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of Heddle is already installed."/>
 
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR"/>
-    <!-- Editable plugin location (shows as its own line in the installer's
-         Install Directory page). Relative to C:\ (TARGETDIR): the default is
-         the machine-wide VST3 discovery folder; users with their own VST3
-         path can type it there. -->
-    <Property Id="VST3PLUGINSDIR" Value="Common Files\VST3"/>
+
+    <!-- Editable VST3 plugin location. Default = the machine-wide VST3
+         discovery folder (C:\Program Files\Common Files\VST3). The user can
+         point it at their own VST3 location (e.g. their DAW's Plugins\VST3).
+         NOTE: [ProgramFiles64Folder] in a Property value is not expanded at
+         candle time (CNDL1077) - the value is stored and the standard folder
+         reference resolves when the directory Name=[VST3PLUGINSDIR] is
+         evaluated at install time, which is exactly what we want. A plain
+         Property alone would NOT render in the UI; the HeddleInstallDirDlg
+         dialog below is what makes the field visible. -->
+    <Property Id="VST3PLUGINSDIR" Value="[ProgramFiles64Folder]Common Files\VST3"/>
+
     <UIRef Id="WixUI_InstallDir"/>
+
+    <!--
+        Extended install-directory dialog (NEW Id - see header comment: the
+        stock InstallDirDlg cannot be redefined while WixUIExtension is
+        loaded). Shows the install folder (standard WIXUI_INSTALLDIR
+        PathEdit, Indirect like the stock dialog) plus the editable VST3
+        plugin folder bound directly to VST3PLUGINSDIR, with a Browse button
+        that retargets the stock BrowseDlg via _BrowseProperty (must hold the
+        property NAME, not the value). The Publish rows below repoint the
+        stock flow through this dialog.
+    -->
+    <UI>
+      <Dialog Id="HeddleInstallDirDlg" Width="370" Height="270" Title="!(loc.InstallDirDlg_Title)">
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)"/>
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)"/>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+        </Control>
+
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.InstallDirDlgDescription)"/>
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.InstallDirDlgTitle)"/>
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.InstallDirDlgBannerBitmap)"/>
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0"/>
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0"/>
+
+        <Control Id="FolderLabel" Type="Text" X="20" Y="60" Width="290" Height="18" NoPrefix="yes" Text="!(loc.InstallDirDlgFolderLabel)"/>
+        <Control Id="Folder" Type="PathEdit" X="20" Y="80" Width="320" Height="18" Property="WIXUI_INSTALLDIR" Indirect="yes"/>
+        <Control Id="ChangeFolder" Type="PushButton" X="20" Y="100" Width="56" Height="17" Text="!(loc.InstallDirDlgChange)"/>
+
+        <!-- === Heddle addition: second field for the VST3 plugin folder === -->
+        <Control Id="VST3Label" Type="Text" X="20" Y="135" Width="290" Height="18" NoPrefix="yes" Text="VST3 plugin folder (browse or type your own path; 32-bit DAWs need a path inside Program Files (x86)):"/>
+        <Control Id="VST3Folder" Type="PathEdit" X="20" Y="155" Width="320" Height="18" Property="VST3PLUGINSDIR"/>
+        <Control Id="ChangeVST3" Type="PushButton" X="20" Y="175" Width="56" Height="17" Text="!(loc.InstallDirDlgChange)" ToolTip="Browse for the VST3 plugin folder">
+          <Publish Property="_BrowseProperty" Value="VST3PLUGINSDIR" Order="1">1</Publish>
+          <Publish Event="SpawnDialog" Value="BrowseDlg" Order="2">1</Publish>
+        </Control>
+      </Dialog>
+
+      <!-- Route the stock flow through HeddleInstallDirDlg instead of the
+           stock InstallDirDlg. The stock fragment publishes its own
+           LicenseAgreementDlg->Next and VerifyReadyDlg->Back rows targeting
+           InstallDirDlg at Order 1; mine carry the SAME dialog/control/
+           condition at Order 10 so they execute last and win (last NewDialog
+           in an event sequence is the one opened). The stock InstallDirDlg
+           stays in the package, merely never opened. -->
+      <Publish Dialog="LicenseAgreementDlg" Control="Next" Event="NewDialog" Value="HeddleInstallDirDlg" Order="10">LicenseAccepted = "1"</Publish>
+      <Publish Dialog="HeddleInstallDirDlg" Control="Back" Event="NewDialog" Value="LicenseAgreementDlg">1</Publish>
+      <Publish Dialog="HeddleInstallDirDlg" Control="Next" Event="SetTargetPath" Value="[WIXUI_INSTALLDIR]" Order="1">1</Publish>
+      <Publish Dialog="HeddleInstallDirDlg" Control="Next" Event="DoAction" Value="WixUIValidatePath" Order="2">NOT WIXUI_DONTVALIDATEPATH</Publish>
+      <Publish Dialog="HeddleInstallDirDlg" Control="Next" Event="SpawnDialog" Value="InvalidDirDlg" Order="3"><![CDATA[NOT WIXUI_DONTVALIDATEPATH AND WIXUI_INSTALLDIR_VALID<>"1"]]></Publish>
+      <Publish Dialog="HeddleInstallDirDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Order="4">WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID="1"</Publish>
+      <Publish Dialog="HeddleInstallDirDlg" Control="ChangeFolder" Property="_BrowseProperty" Value="[WIXUI_INSTALLDIR]" Order="1">1</Publish>
+      <Publish Dialog="HeddleInstallDirDlg" Control="ChangeFolder" Event="SpawnDialog" Value="BrowseDlg" Order="2">1</Publish>
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="HeddleInstallDirDlg" Order="10">NOT Installed</Publish>
+    </UI>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <!-- ProgramFiles64Folder: in a 64-bit package ProgramFilesFolder is
@@ -161,7 +234,7 @@
         <ComponentRef Id="cmpProxy"/>
         <ComponentRef Id="cmpDocs"/>
       </Feature>
-      <Feature Id="FeaturePlugins" Title="VST3 plugins (directory configurable at install time, default Common Files\VST3)" Level="1">
+      <Feature Id="FeaturePlugins" Title="VST3 plugins (install dir configurable)" Level="1">
         <ComponentRef Id="cmpProxyVst"/>
         <ComponentRef Id="cmpSmokeVst"/>
         <ComponentRef Id="cmpBridgeVst"/>
