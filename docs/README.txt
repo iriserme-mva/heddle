@@ -18,9 +18,10 @@ MSI installer (heddle-0.1.8-win-x64.msi)
     C:\Program Files\Heddle_v0.1.8\
       bin\    the three executables
       LICENSE, README.txt
-    C:\Program Files\Common Files\VST3\
-              all four VST3 bundles - the machine-wide VST3 discovery
-              folder, so DAWs find them with no extra configuration
+  VST3 plugins: the installer has its own "VST3 plugins" location line.
+    Default: C:\Program Files\Common Files\VST3  (machine-wide DAW discovery)
+    -> change it to your own VST3 folder if you keep plugins elsewhere
+       (relative to C:, e.g. "Program Files\Steinberg\VST3")
   Start menu:  Start > All Programs > Heddle_v0.1.8 >  Heddle Host / Heddle Render / Heddle Proxy
   Uninstall:  Settings > Apps > Heddle.
   (If you prefer loose files over the installer: copy bin\* to any folder

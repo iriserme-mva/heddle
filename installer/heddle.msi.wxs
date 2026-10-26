@@ -3,10 +3,13 @@
   Heddle Windows MSI (WiX 3.14, per-machine, x64).
 
   Installs:
-    C:\Program Files\Heddle_v0.1.8\
+    C:\Program Files\Heddle_v0.1.8\            (install dir, editable in the installer UI)
         bin\      heddle-host.exe, heddle-render.exe, heddle-proxy.exe
         LICENSE, README.txt
-    C:\Program Files\Common Files\VST3\     <- machine-wide VST3 discovery folder
+    [VST3PLUGINSDIR]\                          plugin dir, editable in the installer UI
+        default "Common Files\VST3" (=> C:\Program Files\Common Files\VST3, the
+        machine-wide VST3 discovery folder); the user can point it at any
+        existing VST3 location instead
         HeddleProxy.vst3\, HeddleSmokePlugin.vst3\, HeddleBridge.vst3\, HeddleProbeAudio.vst3\
 
   Start menu:  Start > All Programs > Heddle_v0.1.8 >
@@ -38,6 +41,11 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of Heddle is already installed."/>
 
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR"/>
+    <!-- Editable plugin location (shows as its own line in the installer's
+         Install Directory page). Relative to C:\ (TARGETDIR): the default is
+         the machine-wide VST3 discovery folder; users with their own VST3
+         path can type it there. -->
+    <Property Id="VST3PLUGINSDIR" Value="Common Files\VST3"/>
     <UIRef Id="WixUI_InstallDir"/>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -71,8 +79,7 @@
           </Component>
         </Directory>
 
-        <Directory Id="COMMONFILES" Name="Common Files">
-          <Directory Id="VST3DIR" Name="VST3">
+        <Directory Id="VST3DIR" Name="[VST3PLUGINSDIR]">
             <Directory Id="VST3PROXY" Name="HeddleProxy.vst3">
               <Directory Id="VST3PROXYC" Name="Contents">
                 <Directory Id="VST3PROXYW" Name="x86_64-win">
@@ -117,7 +124,6 @@
                 </Directory>
               </Directory>
             </Directory>
-          </Directory>
         </Directory>
       </Directory>
 
@@ -155,7 +161,7 @@
         <ComponentRef Id="cmpProxy"/>
         <ComponentRef Id="cmpDocs"/>
       </Feature>
-      <Feature Id="FeaturePlugins" Title="VST3 plugins (installed to Common Files\VST3)" Level="1">
+      <Feature Id="FeaturePlugins" Title="VST3 plugins (directory configurable at install time, default Common Files\VST3)" Level="1">
         <ComponentRef Id="cmpProxyVst"/>
         <ComponentRef Id="cmpSmokeVst"/>
         <ComponentRef Id="cmpBridgeVst"/>

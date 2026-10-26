@@ -26,11 +26,14 @@ Staged payload (`dist/`):
 Per-machine, **true 64-bit** package (UAC elevation on install is normal for
 Program Files; uninstall via Settings › Apps › Heddle):
 
-- `C:\Program Files\Heddle_v0.1.8\bin\` — heddle-host / heddle-render /
-  heddle-proxy (x64 exes) + `LICENSE`, `README.txt`
-- `C:\Program Files\Common Files\VST3\` — the **machine-wide VST3 discovery
-  folder** every DAW scans by default; all four `<Name>.vst3` bundles land
-  there, so no DAW configuration is needed
+- Install dir `C:\Program Files\Heddle_v0.1.8\` (editable in the UI),
+  `bin\` with the three executables (x64) + `LICENSE`, `README.txt`
+- **Plugin directory configurable at install time** (its own line in the
+  Install Directory page, property `VST3PLUGINSDIR`, default
+  `Common Files\VST3` → `C:\Program Files\Common Files\VST3`, the
+  machine-wide VST3 discovery folder). Users with their own VST3 path type
+  it there (relative to `C:\`, e.g. `Program Files\Steinberg\VST3`). All four
+  `<Name>.vst3` bundles land in the chosen dir, so no DAW configuration is needed.
 - **Start › All Programs › Heddle_v0.1.8** › Heddle Host / Heddle Render /
   Heddle Proxy (shortcuts key on an HKCU registry value per ICE43)
 
