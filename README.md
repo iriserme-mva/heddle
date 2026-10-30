@@ -181,6 +181,35 @@ plugin chain live, and exposes **every param over OSC** (UDP, default port
 | `--no-inblock` | legacy immediate-latch param sets (default is in-block, below) |
 | `--substep N` | in-block curve segment size in samples (default 4) |
 
+### DAW bridge (HeddleBridge VST3)
+
+`HeddleBridge.vst3` is the DAW-facing half of the bridge. Drop it on a track
+and route the chain through it; audio is carried over two shared-memory
+rings (`heddle.bridge.in` / `heddle.bridge.out`) into `heddle-host
+--audio ring`, and back. The plugin's editor is a **self-contained launcher**
+— no terminal, no hand-written config:
+
+1. **Add modules** — drag `.vst3` files from Explorer anywhere onto the
+   editor (or use *Add plugin…* to browse). Dropped `.json` files are loaded
+   as a chain. The list order **is** the chain order (slot 1 → slot 2 → …);
+   *Up / Down / Remove / Rename* adjust it.
+2. **Save config…** — writes a standard Heddle chain JSON (same schema as
+   `examples/chain.json`, built with `heddle::config::dump`), defaulting to
+   `Documents/Heddle/`. The sample-rate field is pre-filled from the DAW's
+   current rate — the host creates the rings at the config's rate, so keep
+   them equal.
+3. **Start host** — spawns `heddle-host.exe <saved-config> --audio ring`
+   hidden (no console window). The executable is auto-located (`C:\Program
+   Files\Heddle_v*\bin`, plus a walk-up from the plugin for dev builds) with
+   a *Browse…* override; your choice is remembered.
+
+While the host is not running the plugin is a silent passthrough, so it is
+safe to leave in a session. The status line flips from *waiting for
+heddle-host* to *connected* once the rings appear (~1 s poll). Note: if the
+host process is killed, the output rings go stale (Windows named mappings
+can't be deleted while mapped) — the plugin then passes silence through the
+bridge until the host is restarted; *Start host* re-attaches automatically.
+
 ### VST structure of a chain
 
 The config's `chain` array is the VST structure: an **ordered list of slots**,

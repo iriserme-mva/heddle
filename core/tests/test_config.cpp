@@ -195,3 +195,65 @@ TEST_CASE("parseFile reads from disk") {
     CHECK_FALSE(config::parseFile(missing, bad, &err));
     std::remove(path.c_str());
 }
+
+// ---------------------------------------------------------------------------
+// Launcher round-trip: the HeddleBridge editor (host/heddle_bridge/bridge.cpp)
+// builds a ChainConfig exactly this way — sample rate + block + osc + slots —
+// and serialises it with dump(). This case pins the contract that such a
+// config parses back cleanly, so the editor can't silently generate config
+// the host rejects.
+TEST_CASE("launcher-generated config round-trips") {
+    ChainConfig cfg;
+    cfg.sampleRate = 48000;
+    cfg.blockSize = 1024;
+    cfg.osc.port = 9001;
+    cfg.osc.bindHost = "127.0.0.1";
+    {
+        SlotConfig s;
+        s.id = "gain";
+        s.pluginPath = "C:/Program Files/Common Files/VST3/HeddleSmokePlugin.vst3";
+        s.enabled = true;
+        cfg.slots.push_back(std::move(s));
+    }
+    {
+        SlotConfig s;
+        s.id = "probe";
+        s.pluginPath = "C:/Program Files/Common Files/VST3/HeddleProbeAudio.vst3";
+        s.enabled = true;
+        cfg.slots.push_back(std::move(s));
+    }
+
+    const std::string text = config::dump(cfg);
+    CHECK(text.find("\"chain\"") != std::string::npos);
+    CHECK(text.find("\"osc\"") != std::string::npos);
+
+    ChainConfig rt;
+    std::string err;
+    REQUIRE(config::parse(text, rt, &err));
+    CHECK(rt.sampleRate == 48000);
+    CHECK(rt.blockSize == 1024);
+    CHECK(rt.osc.port == 9001);
+    CHECK(rt.osc.bindHost == "127.0.0.1");
+    REQUIRE(rt.slots.size() == 2);
+    CHECK(rt.slots[0].id == "gain");
+    CHECK(rt.slots[1].id == "probe");
+    CHECK(rt.slots[0].pluginPath == "C:/Program Files/Common Files/VST3/HeddleSmokePlugin.vst3");
+    CHECK(rt.slots[1].pluginPath == "C:/Program Files/Common Files/VST3/HeddleProbeAudio.vst3");
+}
+
+TEST_CASE("launcher-generated config rejects duplicate slot ids") {
+    ChainConfig cfg;
+    cfg.sampleRate = 48000;
+    cfg.osc.port = 9001;
+    for (const char* p : {"a.vst3", "b.vst3"}) {
+        SlotConfig s;
+        s.id = "dup";
+        s.pluginPath = p;
+        cfg.slots.push_back(std::move(s));
+    }
+    const std::string text = config::dump(cfg);
+    ChainConfig rt;
+    std::string err;
+    CHECK_FALSE(config::parse(text, rt, &err));
+    CHECK(!err.empty());
+}

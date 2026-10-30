@@ -1,35 +1,19 @@
 {
   "sample_rate": 48000,
   "block_size": 1024,
+  "osc": { "port": 9001, "bind_host": "127.0.0.1" },
   "chain": [
     {
-      "id": "comp",
-      "plugin": "/opt/vst/Comp.vst3",
-      "plugin_id": "com.example.comp",
+      "id": "gain",
+      "plugin": "C:/Program Files/Common Files/VST3/HeddleSmokePlugin.vst3",
       "enabled": true,
-      "params": {
-        "Threshold": 0.6,
-        "Ratio": 0.3,
-        "Enable": 1.0
-      }
+      "params": { "Gain": 1.0, "PWM pct": 1.0 }
     },
     {
-      "id": "eq",
-      "plugin": "/opt/vst/Eq.vst3",
+      "id": "probe",
+      "plugin": "C:/Program Files/Common Files/VST3/HeddleProbeAudio.vst3",
       "enabled": true,
-      "params": {
-        "HighGain": 0.5,
-        "LowCut": 0.2
-      }
-    },
-    {
-      "id": "dly",
-      "plugin": "/opt/vst/Dly.vst3",
-      "enabled": false,
-      "params": {
-        "Time": 0.2,
-        "Feedback": 0.35
-      }
+      "params": { "Gain": 0.5 }
     }
   ]
 }

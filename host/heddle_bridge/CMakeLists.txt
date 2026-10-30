@@ -32,10 +32,16 @@ target_link_libraries(heddle_bridge_plugin
         juce::juce_graphics
         juce::juce_gui_basics)
 
-# The status editor needs the GUI stack (juce_gui_basics). The core AudioRing
+# The launcher editor needs the GUI stack (juce_gui_basics). The core AudioRing
 # API needs only heddle_core. No audio devices and -- critically -- no
 # juce_audio_plugin_client (the plugin target already compiles the VST3 SDK
 # base; a second copy would ODR-conflict. Same rule as every host target).
+
+# The editor uses synchronous FileChooser::showDialog / AlertWindow modal
+# loops (the launcher runs on the host message thread, so a nested dispatch
+# loop is the right model there -- JUCE only compiles those APIs under this
+# define to force DAW-embedded plugins to think about it explicitly).
+target_compile_definitions(heddle_bridge_plugin PRIVATE JUCE_MODAL_LOOPS_PERMITTED=1)
 
 # Headless CI: disable the web browser so the juce_gui_extra sources
 # (compiled into this target via the gui modules) don't drag in GTK (Linux)
