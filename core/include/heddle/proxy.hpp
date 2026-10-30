@@ -109,7 +109,11 @@ struct ProxyRoute {
 
 struct ProxyConfig {
     int listenPort = 9100;   // the port the surface (TouchOSC) sends to
-    std::string listenHost = "127.0.0.1";
+    // Default: all interfaces. A surface (TouchOSC on a phone) is usually on
+    // the LAN, not on loopback — binding 127.0.0.1 made the proxy invisible
+    // to any remote surface (only host->proxy traffic on the same machine
+    // worked). Set "127.0.0.1" explicitly for loopback-only setups.
+    std::string listenHost = "0.0.0.0";
     std::string mode = "only-control";  // "off" | "only-control" | "full"
     std::vector<ProxyTarget> targets;   // up to kMaxTargets
     std::vector<ProxyRoute> routes;

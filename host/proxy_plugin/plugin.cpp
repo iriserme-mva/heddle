@@ -19,6 +19,7 @@
 //
 // The routing table is persisted in the plugin state (getStateInformation /
 // setStateInformation) so it follows the DAW's save.
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <string>
@@ -52,12 +53,14 @@ public:
         : AudioProcessor(BusesProperties()
                              .withInput("Input", juce::AudioChannelSet::stereo())
                              .withOutput("Output", juce::AudioChannelSet::stereo())) {
-        // Default (no state) config: listen on 9100, only-control, empty
-        // table. The engine is started lazily from the message thread (see
-        // timerCallback) so a throwaway instance created during VST3 factory
-        // enumeration never binds a socket or touches the audio thread.
+        // Default (no state) config: listen on 9100 on ALL interfaces (a
+        // TouchOSC surface usually sits on the LAN, not loopback),
+        // only-control, empty table. The engine is started lazily from the
+        // message thread (see timerCallback) so a throwaway instance created
+        // during VST3 factory enumeration never binds a socket or touches
+        // the audio thread.
         cfg_.listenPort = 9100;
-        cfg_.listenHost = "127.0.0.1";
+        cfg_.listenHost = "0.0.0.0";
         cfg_.mode = "only-control";
         startTimerHz(200);  // pump OSC ~5ms (non-blocking) on the msg thread
     }
@@ -329,6 +332,12 @@ public:
     explicit ProxyEditor(ProxyProcessor& owner)
         : juce::AudioProcessorEditor(owner), owner_(owner) {
         setSize(860, 700);
+        // The table is dynamic: start with the stored routes (min 8 so the
+        // default layout is familiar), and ADD ROUTE grows from there.
+        numRows_ = (int) juce::jlimit((int) kDefaultRoutes, (int) kMaxRoutes,
+                                      (int) std::max<size_t>(kDefaultRoutes,
+                                                              owner_.cfg_.routes.size()));
+        setSize(860, heightForRows(numRows_));
         toBack();
 
         title_ = new juce::Label("t", "Heddle Proxy - OSC fan-out");
@@ -368,6 +377,19 @@ public:
         listenEd_->setJustification(juce::Justification::centredLeft);
         styleInput(listenEd_);
         addAndMakeVisible(listenEd_);
+
+        // Listen HOST: which interfaces the listen socket binds. Default
+        // 0.0.0.0 (all) — required for a LAN surface (TouchOSC on a phone);
+        // 127.0.0.1 for loopback-only setups.
+        hostLbl_ = new juce::Label("lhst", "LISTEN HOST");
+        styleFaintLabel(hostLbl_);
+        addAndMakeVisible(hostLbl_);
+        hostEd_ = new juce::TextEditor("lhp");
+        hostEd_->setText(owner_.cfg_.listenHost.empty() ? juce::String("0.0.0.0")
+                                                        : jstr(owner_.cfg_.listenHost));
+        hostEd_->setJustification(juce::Justification::centredLeft);
+        styleInput(hostEd_);
+        addAndMakeVisible(hostEd_);
 
         buildTargets();
         buildRoutes();
@@ -411,14 +433,16 @@ public:
         g.setColour(HeddlePalette::accent());
         g.fillRoundedRectangle(16, 30, 44, 4, 2.0f);
 
-        // Section dividers (behind the row groups). Offsets must match resized():
-        // each section starts at base + 36 (header) + rows*rowH + 10.
+        // Section dividers (behind the row groups). Offsets must match
+        // resized(): r0 = targets top + header + 5 target rows + gap;
+        // d0 = routes top + header + numRows_ rows + 48 (ADD ROUTE slot).
         g.setColour(HeddlePalette::divider());
         g.fillRect(16, 60, getWidth() - 32, 1);
-        const int t0 = 78, tRowH = 30;
+        const int t0 = 78;
+        const int tRowH = 30;
         const int r0 = t0 + 36 + ProxyConfig::kMaxTargets * tRowH + 10;
         g.fillRect(16, r0 - 12, getWidth() - 32, 1);
-        const int d0 = r0 + 36 + kMaxRoutes * 36 + 10;
+        const int d0 = r0 + 36 + numRows_ * 36 + 10;
         g.fillRect(16, d0 - 12, getWidth() - 32, 1);
         g.fillRect(668, d0 + 8, 1, 88);  // route table | learn panel
     }
@@ -437,6 +461,8 @@ public:
         apply_->setBounds(getWidth() - 106, 62, 90, 30);
         listenLbl_->setBounds(200, 68, 96, 20);
         listenEd_->setBounds(300, 66, 74, 24);
+        hostLbl_->setBounds(392, 68, 96, 20);
+        hostEd_->setBounds(496, 66, 84, 24);
 
         // Targets block
         const int t0 = 78;
@@ -465,7 +491,7 @@ public:
         const int rRowH = 36;
         const int xSrc = 16, xTgt = 176, xSlot = 242, xParam = 372;
         const int xArg = 528, xMin = 572, xMax = 606, xCurve = 648;
-        for (int i = 0; i < kMaxRoutes; ++i) {
+        for (int i = 0; i < numRows_; ++i) {
             const int y = r0 + 36 + i * rRowH;
             routeSrc_[i]->setBounds(xSrc, y, 150, 24);
             routeTgt_[i]->setBounds(xTgt, y, 56, 26);
@@ -477,9 +503,10 @@ public:
             routeCurve_[i]->setBounds(xCurve, y, 56, 26);
             routeClr_[i]->setBounds(708, y, 48, 26);
         }
+        addRouteBtn_->setBounds(16, r0 + 36 + numRows_ * rRowH, 110, 28);
 
         // Learn (received addresses) panel — right of the route table.
-        const int d0 = r0 + 36 + kMaxRoutes * rRowH + 10;
+        const int d0 = r0 + 36 + numRows_ * rRowH + 48;
         learnHdr_->setBounds(688, d0 + 8, 160, 16);
         learnList_->setBounds(688, d0 + 28, 156, 68);
 
@@ -492,7 +519,10 @@ public:
     }
 
 private:
-    static constexpr int kMaxRoutes = 8;
+    // Hard cap on route rows. The table was a fixed 8; it is now dynamic —
+    // ADD ROUTE appends, each row's "x" removes it, and the editor resizes.
+    static constexpr int kMaxRoutes = 64;
+    static constexpr int kDefaultRoutes = 8;
 
     static juce::String modeLabel(const std::string& m) {
         if (m == "off") return "OFF";
@@ -584,11 +614,87 @@ private:
         l->setColour(juce::ListBox::textColourId, HeddlePalette::text());
     }
 
+    // ---- Dynamic route table (add / remove / sizing) ----------------------
+    // Editor height for a given number of route rows — derived from the SAME
+    // offsets as resized()/paint() so the bottom (discover list, learn list)
+    // is never clipped: targets top 78 + 36 header + 5*30 target rows + 10
+    // gap = routes top; +36 routes header + rows*36 + 48 (ADD ROUTE slot) =
+    // d0; the lowest content is the discover list at d0+70..d0+140, plus 16
+    // px bottom padding.
+    static int heightForRows(int rows) {
+        const int t0 = 78, tRowH = 30;
+        const int r0 = t0 + 36 + ProxyConfig::kMaxTargets * tRowH + 10;
+        const int d0 = r0 + 36 + rows * 36 + 48;
+        return d0 + 140 + 16;
+    }
+    // Set every control of route row `row` from a config route (defaults if
+    // null) — shared by ctor fill, ADD ROUTE and remove-row shifting.
+    void setRouteRow(int row, const ProxyRoute* r) {
+        routeSrc_[row]->setText(r ? jstr(r->srcAddr) : juce::String());
+        routeTgt_[row]->setSelectedId(r ? juce::jlimit(1, 5, r->targetIdx + 1) : 1,
+                                      juce::dontSendNotification);
+        routeSlot_[row]->setText(r ? jstr(r->slot) : juce::String());
+        routeParam_[row]->setText(r ? jstr(r->param) : juce::String());
+        routeArg_[row]->setText(r ? juce::String(r->arg) : juce::String("0"));
+        routeMin_[row]->setText(r ? fmtDbl(r->inMin) : juce::String("0"));
+        routeMax_[row]->setText(r ? fmtDbl(r->inMax) : juce::String("1"));
+        routeCurve_[row]->setSelectedId(r ? idFromCurve(r->curve) : 1,
+                                        juce::dontSendNotification);
+    }
+    void addRouteRow() {
+        if (numRows_ >= kMaxRoutes) {
+            status_->setText("route table is full (" + juce::String(kMaxRoutes)
+                                 + " max) — remove a row first",
+                             juce::dontSendNotification);
+            return;
+        }
+        setRouteRow(numRows_, nullptr);
+        ++numRows_;
+        setSize(getWidth(), heightForRows(numRows_));
+        status_->setText("route row added - press APPLY", juce::dontSendNotification);
+    }
+    // Remove a row: shift the rows below it up (each keeps its contents),
+    // shrink the table by one. The row's controls are reused, not deleted.
+    void removeRouteRow(int row) {
+        if (row < 0 || row >= numRows_) return;
+        for (int i = row; i + 1 < numRows_; ++i) {
+            const ProxyRoute tmp = routeRowAt(i + 1);
+            setRouteRow(i, &tmp);
+        }
+        setRouteRow(numRows_ - 1, nullptr);
+        --numRows_;
+        if (numRows_ < 1) numRows_ = 1;
+        setSize(getWidth(), heightForRows(numRows_));
+        status_->setText("route row removed - press APPLY", juce::dontSendNotification);
+    }
+    // Read a row's controls back into a ProxyRoute (used when shifting).
+    ProxyRoute routeRowAt(int i) {
+        ProxyRoute r;
+        const juce::String src = routeSrc_[i]->getText().trim();
+        const juce::String slot = routeSlot_[i]->getText().trim();
+        const juce::String param = routeParam_[i]->getText().trim();
+        r.srcAddr = src.isEmpty() ? std::string()
+                                  : (src.startsWith("/") ? src : ("/" + src)).toStdString();
+        int ti = routeTgt_[i]->getSelectedId() - 1;
+        if (ti < 0) ti = 0;
+        r.targetIdx = ti;
+        r.slot = slot.toStdString();
+        r.param = param.toStdString();
+        r.arg = parseArg(routeArg_[i]->getText(), 0);
+        r.inMin = parseDbl(routeMin_[i]->getText(), 0.0);
+        r.inMax = parseDbl(routeMax_[i]->getText(), 1.0);
+        r.curve = curveFromId(routeCurve_[i]->getSelectedId());
+        return r;
+    }
+
     // Copy editor field values into owner_.cfg_ (targets + routes + listen).
     void readInputs() {
         std::string err;
         int port = listenEd_->getText().getIntValue();
         if (port > 0 && port <= 65535) owner_.cfg_.listenPort = port;
+        // Listen host: empty field = all interfaces (0.0.0.0).
+        const juce::String h = hostEd_->getText().trim();
+        owner_.cfg_.listenHost = h.isEmpty() ? "0.0.0.0" : h.toStdString();
 
         // Targets: rebuild from the rows (a row is present if it has an ip or
         // port value).
@@ -608,7 +714,7 @@ private:
         // Routes: keep the target index but clamp it to the rebuilt target
         // count (removing a target may invalidate a route's target index).
         std::vector<ProxyRoute> rs;
-        for (int i = 0; i < kMaxRoutes; ++i) {
+        for (int i = 0; i < numRows_; ++i) {
             const juce::String src = routeSrc_[i]->getText().trim();
             const juce::String slot = routeSlot_[i]->getText().trim();
             const juce::String param = routeParam_[i]->getText().trim();
@@ -699,7 +805,7 @@ private:
         // Target combo items: t0..t4.
         juce::StringArray titems;
         for (int i = 0; i < ProxyConfig::kMaxTargets; ++i) titems.add("t" + juce::String(i));
-        for (int i = 0; i < kMaxRoutes; ++i) {
+        for (int i = 0; i < numRows_; ++i) {
             routeSrc_[i] = new juce::TextEditor("rs" + juce::String(i));
             if (owner_.cfg_.routes.size() > i)
                 routeSrc_[i]->setText(jstr(owner_.cfg_.routes[i].srcAddr));
@@ -766,18 +872,14 @@ private:
             routeClr_[i]->setColour(juce::TextButton::buttonColourId, HeddlePalette::neutral());
             routeClr_[i]->setColour(juce::TextButton::textColourOffId, HeddlePalette::textDim());
             routeClr_[i]->setColour(juce::TextButton::textColourOnId, HeddlePalette::accent());
-            routeClr_[i]->onClick = [this, row] {
-                routeSrc_[row]->clear();
-                routeSlot_[row]->clear();
-                routeParam_[row]->clear();
-                routeTgt_[row]->setSelectedId(1, juce::dontSendNotification);
-                routeArg_[row]->setText(juce::String("0"));
-                routeMin_[row]->setText(juce::String("0"));
-                routeMax_[row]->setText(juce::String("1"));
-                routeCurve_[row]->setSelectedId(1, juce::dontSendNotification);
-            };
+            routeClr_[i]->onClick = [this, row] { removeRouteRow(row); };
             addAndMakeVisible(routeClr_[i]);
         }
+
+        // ADD ROUTE — append a row below the table (the table was a fixed 8).
+        addRouteBtn_ = new HeddleButton("addr", "+ ADD ROUTE", HeddleButton::Kind::Neutral);
+        addRouteBtn_->onClick = [this] { addRouteRow(); };
+        addAndMakeVisible(addRouteBtn_);
     }
 
     void buildDiscover() {
@@ -826,7 +928,7 @@ private:
         styleList(discList_);
         discModel_.setInsertCallback([this](int ti, const ProxyDiscovered::Param& p) {
             // Find the first empty route row and fill it.
-            for (int i = 0; i < kMaxRoutes; ++i) {
+            for (int i = 0; i < numRows_; ++i) {
                 if (routeSrc_[i]->getText().trim().isEmpty() &&
                     routeSlot_[i]->getText().trim().isEmpty() &&
                     routeParam_[i]->getText().trim().isEmpty()) {
@@ -866,7 +968,7 @@ private:
         styleList(learnList_);
         learnModel_.setFillCallback([this](const std::string& addr, int numFloats) {
             int row = -1;
-            for (int i = 0; i < kMaxRoutes; ++i) {
+            for (int i = 0; i < numRows_; ++i) {
                 if (routeSrc_[i]->getText().trim().isEmpty() &&
                     routeSlot_[i]->getText().trim().isEmpty() &&
                     routeParam_[i]->getText().trim().isEmpty()) { row = i; break; }
@@ -917,6 +1019,8 @@ private:
     juce::Button* apply_ = nullptr;
     juce::Label* listenLbl_ = nullptr;
     juce::TextEditor* listenEd_ = nullptr;
+    juce::Label* hostLbl_ = nullptr;
+    juce::TextEditor* hostEd_ = nullptr;
 
     juce::Label* targetsHdr_ = nullptr;
     juce::Label* tgtColEn_ = nullptr;
@@ -943,6 +1047,8 @@ private:
     juce::TextEditor* routeMax_[kMaxRoutes] = {};
     juce::ComboBox* routeCurve_[kMaxRoutes] = {};
     juce::Button* routeClr_[kMaxRoutes] = {};
+    juce::Button* addRouteBtn_ = nullptr;
+    int numRows_ = 0;  // ACTIVE route rows (kDefaultRoutes..kMaxRoutes)
 
     juce::Button* discBtn_ = nullptr;
     juce::Label* discHdr_ = nullptr;
