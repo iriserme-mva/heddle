@@ -67,8 +67,14 @@ foreach ($e in $exe) {
 foreach ($v in $vst3) {
   $src = Join-Path $BUILD $v
   if (-not (Test-Path $src)) { throw "missing build artifact: $src" }
-  $dst = Join-Path $DIST "plugins\"
-  Copy-Item $src (Join-Path $dst (Split-Path $src -Leaf)) -Recurse -Force
+  $leaf = Split-Path $src -Leaf
+  $dst  = Join-Path (Join-Path $DIST "plugins") $leaf
+  # Copy-Item -Recurse NESTS into an already-existing bundle dir instead of
+  # replacing it, so a re-run over a stale dist/ silently keeps the OLD flat
+  # bundle (which the .wxs embeds) and drops the fresh one nested inside.
+  # Remove the staged bundle first so each run is a clean copy.
+  if (Test-Path $dst) { Remove-Item $dst -Recurse -Force }
+  Copy-Item $src $dst -Recurse -Force
 }
 Copy-Item (Join-Path $REPO "LICENSE")  (Join-Path $DIST "LICENSE")  -Force
 # The user-facing README lives in the repo at docs/README.txt and is staged
