@@ -109,14 +109,36 @@ std::string oscEncode(const OscMsg& msg) {
 }
 
 bool oscDecode(const char* data, size_t len, OscMsg& out) {
-    if (!data || len < 4 + 1) return false;
-    Reader r{data, len};
-    uint32_t total = r.u32();
-    if (total == 0 || total > len - 4) return false;
-    // Parse only the declared frame. Bytes after 4+total belong to the
-    // next datagram (or padding), and a malformed tag section must not be
-    // able to read them: bound every read to the declared length.
-    r.limit = 4 + size_t(total);
+    if (!data || len < 1) return false;
+    // Two framings are accepted, auto-detected from the first byte:
+    //   * Heddle length-prefixed: <4-byte big-endian total-length> followed
+    //     by the OSC 1.0 message. What oscEncode() emits — internal
+    //     host<->proxy traffic always uses it.
+    //   * Bare OSC 1.0: the datagram IS the message (address, tags, args,
+    //     no length header). This is what external control surfaces emit by
+    //     default — TouchOSC, Ableton Live's OSC, TouchDesigner, Max, etc.
+    //     Without accepting it, every external-surface packet was silently
+    //     dropped: the first four address bytes (/f1\0 = 0x2f663100 ~ 793M)
+    //     were misread as the length and failed the `total > len-4` check.
+    // The discriminator is unambiguous: an OSC address pattern always starts
+    // with '/' (0x2f), whereas a length-prefixed frame's first byte is the
+    // MSB of the (sub-256 MB) total length — always 0x00, never '/'.
+    size_t offset = 0;
+    size_t limit = len;
+    if (data[0] != '/') {
+        if (len < 5) return false;
+        Reader hdr{data, len};
+        const uint32_t total = hdr.u32();
+        if (total == 0 || total > len - 4) return false;
+        offset = 4;
+        limit = 4 + size_t(total);
+    }
+    // Parse only the declared frame. Bytes after `limit` belong to the next
+    // datagram (or padding), and a malformed tag section must not be able to
+    // read them: bound every read to the declared length (relative to p).
+    const char* p = data + offset;
+    Reader r{p, limit - offset};
+    if (r.limit < 2) return false;  // at least addr NUL + tag ','
     out = OscMsg{};
     auto addrPair = r.oscString();
     out.addr = addrPair.first;

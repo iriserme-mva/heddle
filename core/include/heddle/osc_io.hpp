@@ -31,6 +31,11 @@ public:
     bool openOut(const std::string& host, int port, std::string* err);
 
     bool send(const OscMsg& msg);
+    // Send an EXACT datagram byte-for-byte (no re-encoding). Used by the
+    // test connector to emulate external surfaces (TouchOSC etc.) whose
+    // wire form is bare OSC 1.0 — no length header — which OscUdp::send's
+    // oscEncode would not reproduce.
+    bool sendRaw(const std::string& datagram);
     // Returns false if nothing available. If src is non-null, it receives
     // the sender address of the packet.
     bool poll(OscMsg& out, SourceAddr* src = nullptr);

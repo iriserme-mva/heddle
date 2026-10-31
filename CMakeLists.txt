@@ -70,6 +70,14 @@ add_executable(heddle-proxy core/tools/proxy_main.cpp)
 target_link_libraries(heddle-proxy PRIVATE heddle_core)
 set_target_properties(heddle-proxy PROPERTIES OUTPUT_NAME heddle-proxy)
 
+# ---- heddle-osc-send (test connector) --------------------------------------
+# Emulates a control surface (TouchOSC etc.): sends bare OSC 1.0 (no length
+# header, --bare) or Heddle's length-prefixed frame to ip:port, so the
+# receive path can be proven end to end without a phone. See docs/PROXY.md.
+add_executable(heddle-osc-send core/tools/osc_send.cpp)
+target_link_libraries(heddle-osc-send PRIVATE heddle_core)
+set_target_properties(heddle-osc-send PROPERTIES OUTPUT_NAME heddle-osc-send)
+
 # ---- JUCE host layer (opt-in) ----------------------------------------------
 option(HEDDLE_BUILD_HOST "Build the JUCE host layer (VST3 plugin + smoke CLI)" OFF)
 if(HEDDLE_BUILD_HOST)

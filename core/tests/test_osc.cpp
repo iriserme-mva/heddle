@@ -128,6 +128,86 @@ TEST_CASE("rejects tag args that underflow the frame") {
     CHECK_FALSE(oscDecode(buf3, sizeof(buf3), dec));
 }
 
+TEST_CASE("accepts bare OSC 1.0 (no length header) — the TouchOSC/Live/Max form") {
+    // External control surfaces do NOT send the Heddle length-prefixed frame.
+    // They emit a plain OSC 1.0 datagram: address, tags, args, no 4-byte
+    // length header. This is the form TouchOSC emits for a fader at /f1.
+    // Before the dual-framing fix, oscDecode read the first four address
+    // bytes (/f1\0 = 0x2f663100 ~ 793M) as the length, saw it exceed the
+    // packet, and dropped the message silently — so no external surface
+    // could ever reach the proxy. These are the regression guards.
+    //
+    // addr "/f1\0" (4, already aligned) + tags ",f\0\0" (4) + float(4) = 12B.
+    std::string bare;
+    bare += "/f1";      bare += '\0';
+    bare += ",f";       bare += '\0'; bare += '\0';
+    float v = 0.5f; uint32_t u; std::memcpy(&u, &v, 4);
+    bare += char((u >> 24) & 0xff); bare += char((u >> 16) & 0xff);
+    bare += char((u >> 8) & 0xff);  bare += char(u & 0xff);
+    OscMsg dec;
+    CHECK(oscDecode(bare.data(), bare.size(), dec));
+    CHECK(dec.addr == "/f1");
+    CHECK(std::string(dec.typeTags.begin(), dec.typeTags.end()) == "f");
+    CHECK(dec.floats.size() == 1);
+    CHECK(std::abs(dec.floats[0] - 0.5f) < 1e-6f);
+}
+
+TEST_CASE("bare OSC with no args decodes as a query") {
+    // A bare fader query /f1 with no args: addr "/f1\0" (4) + tags ",\0\0\0" (4).
+    const char bare[8] = {'/','f','1',0, ',', 0, 0, 0};
+    OscMsg dec;
+    CHECK(oscDecode(bare, sizeof(bare), dec));
+    CHECK(dec.addr == "/f1");
+    CHECK(dec.typeTags.empty());
+}
+
+TEST_CASE("bare OSC matches its length-prefixed twin") {
+    // The same logical message must decode identically whether or not the
+    // 4-byte length header is present — internal (host<->proxy) traffic and
+    // external-surface traffic must be indistinguishable to the rest of the
+    // pipeline. Build both by hand for addr "/chain/comp/Threshold", f 0.6.
+    //   body: addr 24B ("/chain/comp/Threshold\0" + 3 pad) + tags ",f\0\0" 4B
+    //         + float 4B = 32B; prefixed = 4-byte header (0x20) + body.
+    std::string body;
+    body += "/chain/comp/Threshold"; body += '\0';
+    body.append(24u - body.size(), '\0');      // pad addr field to 24
+    body += ",f"; body += '\0'; body += '\0';  // tags
+    float v = 0.6f; uint32_t u; std::memcpy(&u, &v, 4);
+    body += char((u >> 24) & 0xff); body += char((u >> 16) & 0xff);
+    body += char((u >> 8) & 0xff);  body += char(u & 0xff);
+    REQUIRE(body.size() == 32);
+    std::string prefixed;
+    uint32_t total = (uint32_t) body.size();
+    prefixed += char((total >> 24) & 0xff); prefixed += char((total >> 16) & 0xff);
+    prefixed += char((total >> 8) & 0xff);  prefixed += char(total & 0xff);
+    prefixed += body;
+    OscMsg a, b;
+    CHECK(oscDecode(body.data(), body.size(), a));
+    CHECK(oscDecode(prefixed.data(), prefixed.size(), b));
+    CHECK(a.addr == b.addr);
+    CHECK(a.addr == "/chain/comp/Threshold");
+    CHECK(std::string(a.typeTags.begin(), a.typeTags.end()) == "f");
+    CHECK(std::abs(a.floats[0] - 0.6f) < 1e-6f);
+    CHECK(std::abs(a.floats[0] - b.floats[0]) < 1e-6f);
+}
+
+TEST_CASE("bare OSC with a multi-arg int+float set decodes") {
+    // set by id: addr "/chain/0/Cutoff\0" (16B) + tags ",if\0" (4B) + int(4)
+    // + float(4) = 28B, no length header.
+    std::string bare;
+    bare += "/chain/0/Cutoff"; bare += '\0';
+    bare += ",if"; bare += '\0';
+    uint32_t iu = 17, fu = 0; float f = 0.25f; std::memcpy(&fu, &f, 4);
+    for (uint32_t w : {iu, fu})
+        for (int s = 24; s >= 0; s -= 8) bare += char((w >> s) & 0xff);
+    OscMsg dec;
+    CHECK(oscDecode(bare.data(), bare.size(), dec));
+    CHECK(dec.addr == "/chain/0/Cutoff");
+    CHECK(dec.ints.size() == 1);
+    CHECK(dec.ints[0] == 17);
+    CHECK(dec.floats.size() == 1);
+    CHECK(std::abs(dec.floats[0] - 0.25f) < 1e-6f);
+}
 }  // namespace
 TEST_SUITE_END();
 

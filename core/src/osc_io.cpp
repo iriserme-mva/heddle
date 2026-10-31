@@ -162,6 +162,22 @@ bool OscUdp::send(const OscMsg& msg) {
     return n == (int)data.size();
 }
 
+bool OscUdp::sendRaw(const std::string& datagram) {
+    if (!SOCKET_VALID(impl_->sock)) return false;
+    struct sockaddr_in to{};
+    if (impl_->haveRemote) {
+        to = impl_->remote;
+    } else {
+        // Loopback fallback: send to self's port (tests / local-only).
+        to.sin_family = AF_INET;
+        to.sin_port = htons(localPort_);
+        to.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    }
+    int n = ::sendto(impl_->sock, datagram.data(), (int)datagram.size(), 0,
+                     (struct sockaddr*)&to, sizeof to);
+    return n == (int)datagram.size();
+}
+
 bool OscUdp::poll(OscMsg& out, SourceAddr* src) {
     if (!SOCKET_VALID(impl_->sock)) return false;
     // Make the socket non-blocking for a zero-wait poll.

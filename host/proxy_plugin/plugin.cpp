@@ -627,6 +627,23 @@ private:
         const int d0 = r0 + 36 + rows * 36 + 48;
         return d0 + 140 + 16;
     }
+    // Show / hide one whole route row's 10 controls. All kMaxRoutes rows are
+    // built up front (so ADD ROUTE never dereferences a null control), but
+    // only the active `numRows_` are visible; the rest are added to the
+    // hierarchy but hidden. Re-shown on ADD, hidden on remove (the vacated
+    // row's controls otherwise linger on screen — the "ghost row" bug).
+    void setRouteRowVisible(int row, bool vis) {
+        if (row < 0 || row >= kMaxRoutes) return;
+        routeSrc_[row]->setVisible(vis);
+        routeTgt_[row]->setVisible(vis);
+        routeSlot_[row]->setVisible(vis);
+        routeParam_[row]->setVisible(vis);
+        routeArg_[row]->setVisible(vis);
+        routeMin_[row]->setVisible(vis);
+        routeMax_[row]->setVisible(vis);
+        routeCurve_[row]->setVisible(vis);
+        routeClr_[row]->setVisible(vis);
+    }
     // Set every control of route row `row` from a config route (defaults if
     // null) — shared by ctor fill, ADD ROUTE and remove-row shifting.
     void setRouteRow(int row, const ProxyRoute* r) {
@@ -649,6 +666,7 @@ private:
             return;
         }
         setRouteRow(numRows_, nullptr);
+        setRouteRowVisible(numRows_, true);   // reveal the pre-built spare row
         ++numRows_;
         setSize(getWidth(), heightForRows(numRows_));
         status_->setText("route row added - press APPLY", juce::dontSendNotification);
@@ -662,6 +680,7 @@ private:
             setRouteRow(i, &tmp);
         }
         setRouteRow(numRows_ - 1, nullptr);
+        setRouteRowVisible(numRows_ - 1, false);  // hide the vacated row
         --numRows_;
         if (numRows_ < 1) numRows_ = 1;
         setSize(getWidth(), heightForRows(numRows_));
@@ -805,7 +824,11 @@ private:
         // Target combo items: t0..t4.
         juce::StringArray titems;
         for (int i = 0; i < ProxyConfig::kMaxTargets; ++i) titems.add("t" + juce::String(i));
-        for (int i = 0; i < numRows_; ++i) {
+        // Build ALL kMaxRoutes rows up front. ADD ROUTE reveals a pre-built
+        // spare (it never constructs one at runtime, which is what used to
+        // dereference a null control and crash the host); only the first
+        // numRows_ are shown, the rest are added-but-hidden.
+        for (int i = 0; i < kMaxRoutes; ++i) {
             routeSrc_[i] = new juce::TextEditor("rs" + juce::String(i));
             if (owner_.cfg_.routes.size() > i)
                 routeSrc_[i]->setText(jstr(owner_.cfg_.routes[i].srcAddr));
@@ -874,6 +897,8 @@ private:
             routeClr_[i]->setColour(juce::TextButton::textColourOnId, HeddlePalette::accent());
             routeClr_[i]->onClick = [this, row] { removeRouteRow(row); };
             addAndMakeVisible(routeClr_[i]);
+
+            setRouteRowVisible(i, i < numRows_);  // hide the spares
         }
 
         // ADD ROUTE — append a row below the table (the table was a fixed 8).

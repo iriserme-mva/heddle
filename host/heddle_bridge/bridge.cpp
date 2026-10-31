@@ -72,6 +72,7 @@
 
 #if JUCE_WINDOWS
 #include <windows.h>
+#include <tlhelp32.h>
 #endif
 
 namespace heddle_bridge {
@@ -352,6 +353,10 @@ struct BridgeSettings {
     juce::String lastConfig;   // last config path (Save/Start reuse it)
     int sampleRate = kDefaultSampleRate;
     int oscPort = kDefaultOscPort;
+    // The launcher's module list, so it survives closing the editor / the DAW.
+    // Stored as base64 of the Heddle chain JSON (id + absolute path per slot)
+    // — one line, so the key=value file parser needs no change. Empty = none.
+    juce::String chainJson;
 
     static juce::File file() {
         return juce::File::getSpecialLocation(juce::File::userHomeDirectory)
@@ -372,6 +377,7 @@ struct BridgeSettings {
             else if (k == "lastConfig")    lastConfig = v;
             else if (k == "sampleRate") { int x = v.getIntValue(); if (x > 0) sampleRate = x; }
             else if (k == "oscPort")    { int x = v.getIntValue(); if (x > 0) oscPort = x; }
+            else if (k == "chainJson")  chainJson = v;
         }
     }
     bool store() const {
@@ -380,6 +386,7 @@ struct BridgeSettings {
         out << "lastConfig=" << lastConfig << juce::newLine;
         out << "sampleRate=" << sampleRate << juce::newLine;
         out << "oscPort="    << oscPort << juce::newLine;
+        out << "chainJson="  << chainJson << juce::newLine;
         const juce::File f = file();
         if (!f.getParentDirectory().exists()) f.getParentDirectory().createDirectory();
         return f.replaceWithText(out);
@@ -607,6 +614,10 @@ public:
         if (hostExe_.isEmpty()) refreshHostExe();
         updateExePathLabel();
 
+        // Restore the module list from a previous session (before the DAW-rate
+        // pre-fill below, which should win over a stale saved rate).
+        restoreSlots();
+
         addBtn_     = makeButton("Add plugin...");
         removeBtn_  = makeButton("Remove");
         upBtn_      = makeButton("Up");
@@ -614,6 +625,7 @@ public:
         renameBtn_  = makeButton("Rename");
         saveBtn_    = makeButton("Save config...");
         startBtn_   = makeButton("Start host");
+        stopBtn_    = makeButton("Stop host");
         addBtn_->onClick     = [this] { onAdd(); };
         removeBtn_->onClick  = [this] { onRemove(); };
         upBtn_->onClick      = [this] { onMove(-1); };
@@ -621,11 +633,14 @@ public:
         renameBtn_->onClick  = [this] { onRename(); };
         saveBtn_->onClick    = [this] { onSave(); };
         startBtn_->onClick   = [this] { onStart(); };
+        stopBtn_->onClick    = [this] { onStop(); };
         for (juce::TextButton* b : { addBtn_, removeBtn_, upBtn_, downBtn_,
-                                     renameBtn_, saveBtn_, startBtn_ })
+                                     renameBtn_, saveBtn_, startBtn_, stopBtn_ })
             addAndMakeVisible(b);
         startBtn_->setColour(juce::TextButton::buttonColourId,
                              juce::Colour(0xff1f6b3a));
+        stopBtn_->setColour(juce::TextButton::buttonColourId,
+                            juce::Colour(0xff7a2222));
 
         setResizable(false, false);
         setSize(620, 470);
@@ -673,7 +688,8 @@ public:
         y += 24 + 12;
 
         saveBtn_->setBounds(margin, y, 180, bh);
-        startBtn_->setBounds(W - margin - 210, y, 210, bh);
+        stopBtn_->setBounds(W - margin - 250, y, 120, bh);
+        startBtn_->setBounds(W - margin - 120, y, 120, bh);
     }
 
     // ---- FileDragAndDropTarget ------------------------------------------
@@ -743,6 +759,41 @@ private:
         return false;
     }
 
+    // ---- module-list persistence -----------------------------------------
+    // The launcher's chain (slots_) is editor memory, so it used to vanish
+    // every time the editor (or the DAW) closed. Persist it to settings.json
+    // as base64 chain JSON and restore it on next open. Slots whose plugin
+    // file no longer exists are dropped (stale path, nothing to load).
+    void restoreSlots() {
+        if (settings_.chainJson.isEmpty()) return;
+        juce::MemoryBlock mb;
+        if (!mb.fromBase64Encoding(settings_.chainJson)
+            || mb.getSize() == 0 || mb.getData() == nullptr)
+            return;
+        const juce::String text =
+            juce::String(reinterpret_cast<const char*>(mb.getData()), mb.getSize());
+        if (text.trim().isEmpty()) return;
+        int rate = settings_.sampleRate, port = settings_.oscPort;
+        juce::String err;
+        if (parseConfigText(text, slots_, rate, port, err)) {
+            slots_.removeIf([](const SlotEntry& s) { return !juce::File(s.path).exists(); });
+            if (rate > 0) { settings_.sampleRate = rate; srValue_.setText(juce::String(rate), juce::dontSendNotification); }
+            if (port > 0) { settings_.oscPort = port; oscValue_.setText(juce::String(port), juce::dontSendNotification); }
+            list_.updateContent();
+            status_.setText("restored " + juce::String(slots_.size()) + " saved module(s)",
+                            juce::dontSendNotification);
+        }
+    }
+    void persistSlots() {
+        juce::String err;
+        const juce::String json = buildConfigJson(slots_, settings_.sampleRate,
+                                                  settings_.oscPort, &err);
+        settings_.chainJson = json.isEmpty()
+            ? juce::String()
+            : juce::Base64::toBase64(json.toRawUTF8(), json.getNumBytesAsUTF8());
+        settings_.store();
+    }
+
     // ---- slot management -------------------------------------------------
     void addSlotFromPath(const juce::String& path) {
         const juce::File file(path);
@@ -758,6 +809,7 @@ private:
         e.id = id;
         e.path = file.getFullPathName();
         slots_.add(e);
+        persistSlots();
     }
     void onAdd() {
         juce::FileChooser chooser("Add a plugin", juce::File(),
@@ -777,6 +829,7 @@ private:
         if (r < 0) return;
         slots_.remove(r);
         list_.updateContent();
+        persistSlots();
     }
     void onMove(int delta) {
         const int r = selectedRow();
@@ -787,6 +840,7 @@ private:
         slots_.remove(r);
         slots_.insert(to, e);
         list_.updateContent();
+        persistSlots();
     }
     void onRename() {
         const int r = selectedRow();
@@ -800,6 +854,7 @@ private:
         }
         slots_[r].id = newId;
         list_.updateContent();
+        persistSlots();
     }
 
     // ---- config save / load ----------------------------------------------
@@ -860,6 +915,7 @@ private:
         oscValue_.setText(juce::String(port), juce::dontSendNotification);
         settings_.lastConfig = file.getFullPathName();
         list_.updateContent();
+        persistSlots();
     }
 
     // ---- host-exe resolution / start --------------------------------------
@@ -989,6 +1045,48 @@ private:
         });
     }
 
+    // Stop the heddle-host we spawned (or any other heddle-host on this
+    // machine — the exe name is specific to Heddle). Windows: Toolhelp
+    // snapshot + TerminateProcess. POSIX: killall, best effort.
+    void onStop() {
+        int killed = 0;
+#if JUCE_WINDOWS
+        {
+            const HANDLE snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if (snap != INVALID_HANDLE_VALUE) {
+                PROCESSENTRY32W pe{};
+                pe.dwSize = sizeof(pe);
+                if (::Process32FirstW(snap, &pe)) {
+                    do {
+                        if (juce::String(pe.szExeFile).equalsIgnoreCase(
+                                "heddle-host")) {
+                            HANDLE hProc =
+                                ::OpenProcess(PROCESS_TERMINATE, FALSE,
+                                              pe.th32ProcessID);
+                            if (hProc != nullptr) {
+                                ::TerminateProcess(hProc, 1);
+                                ::CloseHandle(hProc);
+                                ++killed;
+                            }
+                        }
+                    } while (::Process32NextW(snap, &pe));
+                }
+                ::CloseHandle(snap);
+            }
+        }
+#else
+        {
+            if (std::system("killall -9 heddle-host >/dev/null 2>&1") == 0)
+                killed = 1;
+        }
+#endif
+        if (killed > 0)
+            showWarn("heddle-host stopped (" + juce::String(killed)
+                     + " process" + (killed == 1 ? "" : "es") + ").");
+        else
+            showWarn("No running heddle-host found.");
+    }
+
     // ---- members ----------------------------------------------------------
     BridgeProcessor& proc_;
     juce::Array<SlotEntry> slots_;
@@ -1009,7 +1107,7 @@ private:
     juce::Label exePath_;
     juce::TextButton *addBtn_ = nullptr, *removeBtn_ = nullptr, *upBtn_ = nullptr,
         *downBtn_ = nullptr, *renameBtn_ = nullptr, *saveBtn_ = nullptr,
-        *startBtn_ = nullptr, *browseExe_ = nullptr;
+        *startBtn_ = nullptr, *stopBtn_ = nullptr, *browseExe_ = nullptr;
 };
 
 juce::AudioProcessorEditor* BridgeProcessor::createEditor() {
