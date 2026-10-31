@@ -627,7 +627,7 @@ private:
         const int d0 = r0 + 36 + rows * 36 + 48;
         return d0 + 140 + 16;
     }
-    // Show / hide one whole route row's 10 controls. All kMaxRoutes rows are
+    // Show / hide one whole route row's 9 controls. All kMaxRoutes rows are
     // built up front (so ADD ROUTE never dereferences a null control), but
     // only the active `numRows_` are visible; the rest are added to the
     // hierarchy but hidden. Re-shown on ADD, hidden on remove (the vacated
