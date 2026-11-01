@@ -929,3 +929,4 @@ current after every session** — last section first.
     in the URL is a fallback only. Code-only on GitHub — no binaries in
     commits, releases, or workflow artefacts (why: the
     [License](README.md#license) section in README).
+- 2026-11-01 22:22:53 Fix: Linking with forbidden juce_audio_plugin_client. Action: Commented out linking line in /d/Hermes/MV/projects/heddle/.git/logs/HEAD
