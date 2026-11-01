@@ -63,7 +63,7 @@ add_executable(heddle_osc_perf core/tools/osc_perf.cpp)
 target_link_libraries(heddle_osc_perf PRIVATE heddle_core)
 
 # ---- heddle-proxy (standalone OSC fan-out router) ---------------------------
-# Core-layer (JUCE-free): routes one OSC surface to up to 5 Heddle targets.
+# Core-layer (JUCE-free): routes one OSC surface to any number of Heddle targets.
 # The passthrough VST3 form lives in host/ and reuses the same ProxyEngine.
 # See docs/PROXY.md.
 add_executable(heddle-proxy core/tools/proxy_main.cpp)

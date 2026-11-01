@@ -1,13 +1,13 @@
 # heddle-proxy — OSC fan-out router
 
 `heddle-proxy` routes **one control surface** (e.g. TouchOSC on a phone/tablet)
-to **up to 5 Heddle instances** at once:
+to **any number of Heddle instances** at once:
 
 ```
         OSC                    OSC (rewritten)
 surface ───────►  proxy  ──────────────►  target 1  (Heddle host A)
 (TouchOSC)       (router)                target 2  (Heddle host B)
-                                          target 3 …  (up to 5)
+                                          target 3 …
 ```
 
 It exists to solve the "one surface, many hosts" case: a single TouchOSC layout
@@ -51,7 +51,7 @@ one layout fan out to differently-named slots/params on each target.
   "listen_port": 9100,            // the port the SURFACE (TouchOSC) sends to
   "listen_host": "0.0.0.0",       // bind address (127.0.0.1 for loopback)
   "mode": "only-control",          // "off" | "only-control" | "full"
-  "targets": [                     // up to 5
+  "targets": [                     // unbounded
     { "ip": "127.0.0.1", "port": 9001, "enabled": true },
     { "ip": "192.168.1.40", "port": 9001, "enabled": false }
   ],
@@ -75,9 +75,9 @@ one layout fan out to differently-named slots/params on each target.
   defaults keep the classic "first float, 0..1, as-is" behaviour. See
   [Value mapping](#value-mapping-arg--range--curve).
 
-Validation: listen port 1–65535; ≤5 targets each with a non-empty ip and port
-1–65535; every route's `src` starts with `/`, references an existing target,
-has non-empty `slot` and `param`, and a non-negative `arg`.
+Validation: listen port 1–65535; any number of targets, each with a non-empty
+ip and port 1–65535; every route's `src` starts with `/`, references an existing
+target, has non-empty `slot` and `param`, and a non-negative `arg`.
 
 The VST persists this table in plugin state (DAW save/restore); the standalone
 exe reads it from a file (or builds it from CLI flags, below).
@@ -133,7 +133,7 @@ floats), then pick slot/param (or DISCOVER) and press APPLY.
 heddle-proxy [config.json] [options]
   --listen <port>                    override listen port
   --mode off|only-control|full       override mode
-  --target <ip:port>                 add a target (repeatable, max 5)
+  --target <ip:port>                 add a target (repeatable)
   --route <src> <tgt> <slot> <param> add a route (repeatable)
   --query <ip:port>                  discover a target's slots/params, print, exit
   --timeout <ms>                     discovery timeout (default 1500)
@@ -165,7 +165,8 @@ heddle-proxy \
 2. Put it on a track (it is **audio-dry**: input == output, no DSP).
 3. In the editor:
    - Set the **listen port** (where the surface sends).
-   - Fill in up to 5 **targets** (ip + port, per-target enable).
+   - Fill in **targets** (ip + port, per-target enable) — **+ ADD TARGET**
+     appends a row, each row's **x** removes it.
    - Build the **routes** (surface addr → target → slot → param), or press
      **DISCOVER** against a target to list its slots/params and double-click a
      row to insert a route.

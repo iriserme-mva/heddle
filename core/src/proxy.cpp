@@ -33,8 +33,6 @@ bool ProxyConfig::validate(const ProxyConfig& c, std::string* err) {
         return fail("listen_host must not be empty");
     if (c.mode != "off" && c.mode != "only-control" && c.mode != "full")
         return fail("mode must be \"off\", \"only-control\", or \"full\"");
-    if ((int) c.targets.size() > kMaxTargets)
-        return fail("at most " + std::to_string(kMaxTargets) + " targets");
     for (size_t i = 0; i < c.targets.size(); ++i) {
         const auto& t = c.targets[i];
         if (t.ip.empty())

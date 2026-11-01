@@ -99,7 +99,12 @@ TEST_CASE("proxy config parse/validate/dump round-trip") {
     bad.mode = "full";
     ProxyTarget t; t.ip = "127.0.0.1"; t.port = 9001;
     for (int i = 0; i < 6; ++i) bad.targets.push_back(t);
+    // Target count is unbounded: 6 well-formed targets must validate.
+    CHECK(ProxyConfig::validate(bad, &err));
+    // A target with an empty ip still fails.
+    bad.targets.push_back(ProxyTarget{std::string(), 9002, true});
     CHECK_FALSE(ProxyConfig::validate(bad, &err));
+    CHECK(err.find("ip must not be empty") != std::string::npos);
     bad.targets.pop_back();
     bad.routes.push_back({"/k/1", 9, "s", "p"});
     CHECK_FALSE(ProxyConfig::validate(bad, &err));

@@ -115,12 +115,10 @@ struct ProxyConfig {
     // worked). Set "127.0.0.1" explicitly for loopback-only setups.
     std::string listenHost = "0.0.0.0";
     std::string mode = "only-control";  // "off" | "only-control" | "full"
-    std::vector<ProxyTarget> targets;   // up to kMaxTargets
+    std::vector<ProxyTarget> targets;   // unbounded (a normal rig has hundreds)
     std::vector<ProxyRoute> routes;
 
-    static constexpr int kMaxTargets = 5;
-
-    // mode is valid; targets <= kMaxTargets with ip + port > 0;
+    // mode is valid; every target has ip + port > 0;
     // every route references an existing target. `err` gets a message on
     // failure.
     static bool validate(const ProxyConfig& c, std::string* err);

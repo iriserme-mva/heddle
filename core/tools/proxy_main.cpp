@@ -40,12 +40,12 @@ namespace {
 
 void printUsage(FILE* out) {
     std::fprintf(out,
-        "heddle-proxy — route one OSC surface to up to %d Heddle targets\n"
+        "heddle-proxy — route one OSC surface to any number of Heddle targets\n"
         "\n"
         "usage: heddle-proxy [config.json] [options]\n"
         "  --listen <port>                   override listen port\n"
         "  --mode off|only-control|full      override routing mode\n"
-        "  --target <ip:port>                add a target (repeatable, max %d)\n"
+        "  --target <ip:port>                add a target (repeatable)\n"
         "  --route <src> <tgt> <slot> <param>   add a route (repeatable)\n"
         "      src = surface address, tgt = target index, slot/param = Heddle\n"
         "      value mapping (arg, in_min, in_max, curve): config-file only\n"
@@ -54,8 +54,7 @@ void printUsage(FILE* out) {
         "  --timeout <ms>                    discovery timeout (default 1500)\n"
         "  --stats <sec>                     stats line period on stderr (0=off)\n"
         "  -h, --help                        this text\n"
-        "exit: 0 ok; 1 bad config/usage; 2 socket error\n",
-        ProxyConfig::kMaxTargets, ProxyConfig::kMaxTargets);
+        "exit: 0 ok; 1 bad config/usage; 2 socket error\n");
 }
 
 // Split "ip:port" (port is the last ':'-separated field).
@@ -103,11 +102,6 @@ bool applyOverrides(ProxyConfig& c, int argc, char** argv, std::string* err) {
             c.mode = v;
         } else if (a == "--target") {
             const char* v = need(i, "--target"); if (!v) return false;
-            if ((int) c.targets.size() >= ProxyConfig::kMaxTargets) {
-                *err = "too many --target (max " +
-                       std::to_string(ProxyConfig::kMaxTargets) + ")";
-                return false;
-            }
             ProxyTarget t;
             if (!parseIpPort(v, &t.ip, &t.port, err)) return false;
             c.targets.push_back(std::move(t));

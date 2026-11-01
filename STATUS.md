@@ -3,6 +3,20 @@
 Updated by whoever works on the project (human or agent). **Keep this file
 current after every session** — last section first.
 
+## Proxy targets: unbounded (2026-11-01)
+
+- ✅ **Removed the 5-target cap** (user: "a normal setup is hundreds").
+  `kMaxTargets` deleted from `proxy.hpp` + `validate()` in `proxy.cpp`; CLI
+  `--target` no longer count-checked (`proxy_main.cpp`); GUI target editor is
+  now a dynamic list — per-row enable/ip/port + **ADD TARGET** / per-row **x**
+  (`plugin.cpp`: `std::vector` rows, `rebuildTargetItems()`, `contentHeight()`,
+  editor grows to fit and the DAW scrolls it — the vendored JUCE 8.0.4
+  `Component` has no `enableScrollbars`/`setScrollableSize`, so the editor
+  sizes to content instead of a fixed scrollable window). `docs/PROXY.md`
+  re-synced (any number of targets). Core tests 79/79 (1885 assertions); MSVC
+  full build green (all 8 targets); standalone proxy verified live with a
+  50-target config (`targets=50`, no rejection).
+
 ## Legend
 
 - ✅ done · 🔨 in progress · ⏸ blocked (state why) · 📅 planned

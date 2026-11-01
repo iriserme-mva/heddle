@@ -331,13 +331,16 @@ class ProxyEditor : public juce::AudioProcessorEditor,
 public:
     explicit ProxyEditor(ProxyProcessor& owner)
         : juce::AudioProcessorEditor(owner), owner_(owner) {
-        setSize(860, 700);
-        // The table is dynamic: start with the stored routes (min 8 so the
-        // default layout is familiar), and ADD ROUTE grows from there.
+        // The tables are dynamic: routes start with the stored routes (min 8
+        // so the default layout is familiar), targets with the stored targets
+        // (min 1); ADD ROUTE / ADD TARGET grow them from there.
         numRows_ = (int) juce::jlimit((int) kDefaultRoutes, (int) kMaxRoutes,
                                       (int) std::max<size_t>(kDefaultRoutes,
                                                               owner_.cfg_.routes.size()));
-        setSize(860, heightForRows(numRows_));
+        numTargets_ = std::max(1, (int) owner_.cfg_.targets.size());
+        // The editor grows with row counts (a normal rig has hundreds of
+        // targets); the DAW scrolls an oversized editor window.
+        setSize(860, contentHeight());
         toBack();
 
         title_ = new juce::Label("t", "Heddle Proxy - OSC fan-out");
@@ -405,6 +408,14 @@ public:
     ~ProxyEditor() override = default;
 
     void timerCallback() override {
+        // Keep target dropdowns inside the live row count (a route row's TGT
+        // or the DISCOVER combo may predate a removed target row).
+        const int tN = std::max(1, (int) targetEn_.size());
+        for (int i = 0; i < kMaxRoutes; ++i)
+            if (routeTgt_[i]->getSelectedId() > tN)
+                routeTgt_[i]->setSelectedId(tN, juce::dontSendNotification);
+        if (discTgt_->getSelectedId() > tN)
+            discTgt_->setSelectedId(tN, juce::dontSendNotification);
         refreshStatus();
         refreshLearn();
     }
@@ -434,13 +445,14 @@ public:
         g.fillRoundedRectangle(16, 30, 44, 4, 2.0f);
 
         // Section dividers (behind the row groups). Offsets must match
-        // resized(): r0 = targets top + header + 5 target rows + gap;
-        // d0 = routes top + header + numRows_ rows + 48 (ADD ROUTE slot).
+        // resized()/contentHeight(): r0 = targets top + header + numTargets_
+        // rows + ADD TARGET slot + gap; d0 = routes top + header + numRows_
+        // rows + 48 (ADD ROUTE slot).
         g.setColour(HeddlePalette::divider());
         g.fillRect(16, 60, getWidth() - 32, 1);
         const int t0 = 78;
         const int tRowH = 30;
-        const int r0 = t0 + 36 + ProxyConfig::kMaxTargets * tRowH + 10;
+        const int r0 = t0 + 36 + numTargets_ * tRowH + 36 + 10;
         g.fillRect(16, r0 - 12, getWidth() - 32, 1);
         const int d0 = r0 + 36 + numRows_ * 36 + 10;
         g.fillRect(16, d0 - 12, getWidth() - 32, 1);
@@ -464,22 +476,24 @@ public:
         hostLbl_->setBounds(392, 68, 96, 20);
         hostEd_->setBounds(496, 66, 84, 24);
 
-        // Targets block
+        // Targets block (dynamic rows — one per entry in the row vectors)
         const int t0 = 78;
         targetsHdr_->setBounds(16, t0, 360, 16);
         tgtColEn_->setBounds(16, t0 + 18, 60, 14);
         tgtColIp_->setBounds(86, t0 + 18, 150, 14);
         tgtColPt_->setBounds(242, t0 + 18, 64, 14);
         const int tRowH = 30;
-        for (int i = 0; i < ProxyConfig::kMaxTargets; ++i) {
-            const int y = t0 + 36 + i * tRowH;
+        for (size_t i = 0; i < targetEn_.size(); ++i) {
+            const int y = t0 + 36 + (int) i * tRowH;
             targetEn_[i]->setBounds(28, y + 4, 40, 20);
             targetIp_[i]->setBounds(86, y, 150, 24);
             targetPort_[i]->setBounds(242, y, 64, 24);
+            targetClr_[i]->setBounds(316, y + 2, 48, 26);
         }
+        addTargetBtn_->setBounds(16, t0 + 36 + numTargets_ * tRowH, 110, 28);
 
         // Routes block (row height 36: value/mapping controls under the addr row)
-        const int r0 = t0 + 36 + ProxyConfig::kMaxTargets * tRowH + 10;
+        const int r0 = t0 + 36 + numTargets_ * tRowH + 36 + 10;
         routesHdr_->setBounds(16, r0, 480, 16);
         rtColSrc_->setBounds(16, r0 + 18, 150, 14);
         rtColTgt_->setBounds(176, r0 + 18, 56, 14);
@@ -614,18 +628,95 @@ private:
         l->setColour(juce::ListBox::textColourId, HeddlePalette::text());
     }
 
-    // ---- Dynamic route table (add / remove / sizing) ----------------------
-    // Editor height for a given number of route rows — derived from the SAME
-    // offsets as resized()/paint() so the bottom (discover list, learn list)
-    // is never clipped: targets top 78 + 36 header + 5*30 target rows + 10
-    // gap = routes top; +36 routes header + rows*36 + 48 (ADD ROUTE slot) =
-    // d0; the lowest content is the discover list at d0+70..d0+140, plus 16
-    // px bottom padding.
-    static int heightForRows(int rows) {
+    // ---- Dynamic target + route tables (add / remove / sizing) -----------
+    // Full content height — derived from the SAME offsets as resized()/paint()
+    // (targets top 78 + 36 header + numTargets_*30 rows + 36 ADD TARGET slot
+    // + 10 gap = routes top; +36 routes header + rows*36 + 48 (ADD ROUTE slot)
+    // = d0; the lowest content is the discover list at d0+70..d0+140, plus 16
+    // px bottom padding). The editor is a fixed window that scrolls over this.
+    int contentHeight() {
         const int t0 = 78, tRowH = 30;
-        const int r0 = t0 + 36 + ProxyConfig::kMaxTargets * tRowH + 10;
-        const int d0 = r0 + 36 + rows * 36 + 48;
+        const int r0 = t0 + 36 + numTargets_ * tRowH + 36 + 10;
+        const int d0 = r0 + 36 + numRows_ * 36 + 48;
         return d0 + 140 + 16;
+    }
+    // Keep every target dropdown (route TGT combos + the DISCOVER combo) in
+    // sync with the live target rows. Row i always offers t0..t(i-1), so the
+    // dropdowns only ever point at rows that exist; the 4 Hz timer applies the
+    // same rule, so a stale selection is self-correcting.
+    void rebuildTargetItems() {
+        for (int i = 0; i < kMaxRoutes; ++i) {
+            const int sel = routeTgt_[i]->getSelectedId();
+            routeTgt_[i]->clear(juce::dontSendNotification);
+            for (int k = 0; k < (int) targetEn_.size(); ++k)
+                routeTgt_[i]->addItem("t" + juce::String(k), k + 1);
+            routeTgt_[i]->setSelectedId(juce::jlimit(1, (int) targetEn_.size(), sel),
+                                        juce::dontSendNotification);
+        }
+        const int dSel = discTgt_->getSelectedId();
+        discTgt_->clear(juce::dontSendNotification);
+        for (int k = 0; k < (int) targetEn_.size(); ++k)
+            discTgt_->addItem("t" + juce::String(k), k + 1);
+        discTgt_->setSelectedId(juce::jlimit(1, (int) targetEn_.size(), dSel),
+                                juce::dontSendNotification);
+    }
+    // Append an empty target row.
+    void addTargetRow() {
+        targetEn_.push_back(new juce::ToggleButton("te" + juce::String(targetEn_.size())));
+        auto* en = targetEn_.back();
+        en->setButtonText("ON");
+        en->setToggleState(true, juce::dontSendNotification);
+        en->setClickingTogglesState(true);
+        en->setColour(juce::ToggleButton::textColourId, HeddlePalette::text());
+        en->setColour(juce::ToggleButton::tickColourId, HeddlePalette::accent());
+        addAndMakeVisible(en);
+        targetIp_.push_back(new juce::TextEditor("ti" + juce::String(targetIp_.size())));
+        targetIp_.back()->setJustification(juce::Justification::centredLeft);
+        styleInput(targetIp_.back());
+        addAndMakeVisible(targetIp_.back());
+        targetPort_.push_back(new juce::TextEditor("tp" + juce::String(targetPort_.size())));
+        targetPort_.back()->setJustification(juce::Justification::centredLeft);
+        styleInput(targetPort_.back());
+        addAndMakeVisible(targetPort_.back());
+        const int row = (int) targetEn_.size() - 1;
+        targetClr_.push_back(new HeddleButton("tx" + juce::String(row), "x",
+                                              HeddleButton::Kind::Neutral));
+        targetClr_.back()->onClick = [this, row] { removeTargetRow(row); };
+        addAndMakeVisible(targetClr_.back());
+        ++numTargets_;
+        refreshLayout();
+        status_->setText("target row added - press APPLY", juce::dontSendNotification);
+    }
+    // Remove a target row: destroy its controls and shift the rows below up
+    // (each keeps its contents). Routes pointing at removed/higher indexes
+    // are clamped on APPLY.
+    void removeTargetRow(int row) {
+        if (row < 0 || row >= (int) targetEn_.size()) return;
+        for (int i = row; i + 1 < (int) targetEn_.size(); ++i) {
+            const bool en = targetEn_[i + 1]->getToggleState();
+            const juce::String ip = targetIp_[i + 1]->getText();
+            const juce::String pt = targetPort_[i + 1]->getText();
+            targetEn_[i]->setToggleState(en, juce::dontSendNotification);
+            targetIp_[i]->setText(ip);
+            targetPort_[i]->setText(pt);
+        }
+        delete targetEn_.back();
+        delete targetIp_.back();
+        delete targetPort_.back();
+        delete targetClr_.back();
+        targetEn_.pop_back();
+        targetIp_.pop_back();
+        targetPort_.pop_back();
+        targetClr_.pop_back();
+        if (numTargets_ > 0) --numTargets_;
+        refreshLayout();
+        status_->setText("target row removed - press APPLY", juce::dontSendNotification);
+    }
+    // Re-layout everything after a row was added/removed. setSize() fires
+    // resized(); the window grows to fit the rows (the DAW scrolls it).
+    void refreshLayout() {
+        rebuildTargetItems();
+        setSize(860, contentHeight());
     }
     // Show / hide one whole route row's 9 controls. All kMaxRoutes rows are
     // built up front (so ADD ROUTE never dereferences a null control), but
@@ -648,7 +739,8 @@ private:
     // null) — shared by ctor fill, ADD ROUTE and remove-row shifting.
     void setRouteRow(int row, const ProxyRoute* r) {
         routeSrc_[row]->setText(r ? jstr(r->srcAddr) : juce::String());
-        routeTgt_[row]->setSelectedId(r ? juce::jlimit(1, 5, r->targetIdx + 1) : 1,
+        const int tN = std::max(1, (int) targetEn_.size());
+        routeTgt_[row]->setSelectedId(r ? juce::jlimit(1, tN, r->targetIdx + 1) : 1,
                                       juce::dontSendNotification);
         routeSlot_[row]->setText(r ? jstr(r->slot) : juce::String());
         routeParam_[row]->setText(r ? jstr(r->param) : juce::String());
@@ -668,7 +760,7 @@ private:
         setRouteRow(numRows_, nullptr);
         setRouteRowVisible(numRows_, true);   // reveal the pre-built spare row
         ++numRows_;
-        setSize(getWidth(), heightForRows(numRows_));
+        refreshLayout();
         status_->setText("route row added - press APPLY", juce::dontSendNotification);
     }
     // Remove a row: shift the rows below it up (each keeps its contents),
@@ -683,7 +775,7 @@ private:
         setRouteRowVisible(numRows_ - 1, false);  // hide the vacated row
         --numRows_;
         if (numRows_ < 1) numRows_ = 1;
-        setSize(getWidth(), heightForRows(numRows_));
+        refreshLayout();
         status_->setText("route row removed - press APPLY", juce::dontSendNotification);
     }
     // Read a row's controls back into a ProxyRoute (used when shifting).
@@ -715,10 +807,10 @@ private:
         const juce::String h = hostEd_->getText().trim();
         owner_.cfg_.listenHost = h.isEmpty() ? "0.0.0.0" : h.toStdString();
 
-        // Targets: rebuild from the rows (a row is present if it has an ip or
-        // port value).
+        // Targets: rebuild from the live rows (a row is present if it has an
+        // ip or port value).
         std::vector<ProxyTarget> ts;
-        for (int i = 0; i < ProxyConfig::kMaxTargets && (int) ts.size() < ProxyConfig::kMaxTargets; ++i) {
+        for (size_t i = 0; i < targetEn_.size(); ++i) {
             const juce::String ip = targetIp_[i]->getText().trim();
             const int p = targetPort_[i]->getText().getIntValue();
             if (ip.isEmpty() && p <= 0) continue;
@@ -772,28 +864,38 @@ private:
         tgtColPt_ = new juce::Label("tcp", "PORT");
         styleFaintLabel(tgtColPt_);
         addAndMakeVisible(tgtColPt_);
-        for (int i = 0; i < ProxyConfig::kMaxTargets; ++i) {
-            targetEn_[i] = new juce::ToggleButton("te" + juce::String(i));
-            targetEn_[i]->setButtonText("ON");
-            targetEn_[i]->setToggleState(owner_.cfg_.targets.size() > i ? owner_.cfg_.targets[i].enabled : true,
-                                         juce::dontSendNotification);
-            targetEn_[i]->setClickingTogglesState(true);
-            targetEn_[i]->setColour(juce::ToggleButton::textColourId, HeddlePalette::text());
-            targetEn_[i]->setColour(juce::ToggleButton::tickColourId, HeddlePalette::accent());
-            addAndMakeVisible(targetEn_[i]);
-            targetIp_[i] = new juce::TextEditor("ti" + juce::String(i));
+        // One live row per stored target (min 1); ADD TARGET appends more.
+        for (int i = 0; i < numTargets_; ++i) {
+            targetEn_.push_back(new juce::ToggleButton("te" + juce::String(i)));
+            auto* en = targetEn_.back();
+            en->setButtonText("ON");
+            en->setToggleState(owner_.cfg_.targets.size() > i ? owner_.cfg_.targets[i].enabled : true,
+                               juce::dontSendNotification);
+            en->setClickingTogglesState(true);
+            en->setColour(juce::ToggleButton::textColourId, HeddlePalette::text());
+            en->setColour(juce::ToggleButton::tickColourId, HeddlePalette::accent());
+            addAndMakeVisible(en);
+            targetIp_.push_back(new juce::TextEditor("ti" + juce::String(i)));
             if (owner_.cfg_.targets.size() > i)
-                targetIp_[i]->setText(jstr(owner_.cfg_.targets[i].ip));
-            targetIp_[i]->setJustification(juce::Justification::centredLeft);
-            styleInput(targetIp_[i]);
-            addAndMakeVisible(targetIp_[i]);
-            targetPort_[i] = new juce::TextEditor("tp" + juce::String(i));
+                targetIp_.back()->setText(jstr(owner_.cfg_.targets[i].ip));
+            targetIp_.back()->setJustification(juce::Justification::centredLeft);
+            styleInput(targetIp_.back());
+            addAndMakeVisible(targetIp_.back());
+            targetPort_.push_back(new juce::TextEditor("tp" + juce::String(i)));
             if (owner_.cfg_.targets.size() > i)
-                targetPort_[i]->setText(juce::String(owner_.cfg_.targets[i].port));
-            targetPort_[i]->setJustification(juce::Justification::centredLeft);
-            styleInput(targetPort_[i]);
-            addAndMakeVisible(targetPort_[i]);
+                targetPort_.back()->setText(juce::String(owner_.cfg_.targets[i].port));
+            targetPort_.back()->setJustification(juce::Justification::centredLeft);
+            styleInput(targetPort_.back());
+            addAndMakeVisible(targetPort_.back());
+            targetClr_.push_back(new HeddleButton("tx" + juce::String(i), "x",
+                                                  HeddleButton::Kind::Neutral));
+            const int row = i;
+            targetClr_.back()->onClick = [this, row] { removeTargetRow(row); };
+            addAndMakeVisible(targetClr_.back());
         }
+        addTargetBtn_ = new HeddleButton("atgt", "+ ADD TARGET", HeddleButton::Kind::Neutral);
+        addTargetBtn_->onClick = [this] { addTargetRow(); };
+        addAndMakeVisible(addTargetBtn_);
     }
 
     void buildRoutes() {
@@ -821,9 +923,9 @@ private:
         rtColCv_ = new juce::Label("rcc", "CURVE");
         styleFaintLabel(rtColCv_);
         addAndMakeVisible(rtColCv_);
-        // Target combo items: t0..t4.
-        juce::StringArray titems;
-        for (int i = 0; i < ProxyConfig::kMaxTargets; ++i) titems.add("t" + juce::String(i));
+        // Target combo items: t0..t(n-1) for the live target rows. Rows are
+        // built after buildTargets(), so targetEn_.size() is final here;
+        // ADD/REMOVE TARGET keeps the combos in sync via rebuildTargetItems().
         // Build ALL kMaxRoutes rows up front. ADD ROUTE reveals a pre-built
         // spare (it never constructs one at runtime, which is what used to
         // dereference a null control and crash the host); only the first
@@ -837,13 +939,10 @@ private:
             addAndMakeVisible(routeSrc_[i]);
 
             routeTgt_[i] = new juce::ComboBox("rt" + juce::String(i));
-            routeTgt_[i]->addItem("t0", 1);
-            routeTgt_[i]->addItem("t1", 2);
-            routeTgt_[i]->addItem("t2", 3);
-            routeTgt_[i]->addItem("t3", 4);
-            routeTgt_[i]->addItem("t4", 5);
+            const int tN = std::max(1, (int) targetEn_.size());
+            for (int k = 0; k < tN; ++k) routeTgt_[i]->addItem("t" + juce::String(k), k + 1);
             const int sel = owner_.cfg_.routes.size() > i ? owner_.cfg_.routes[i].targetIdx + 1 : 1;
-            routeTgt_[i]->setSelectedId(juce::jlimit(1, 5, sel), juce::dontSendNotification);
+            routeTgt_[i]->setSelectedId(juce::jlimit(1, tN, sel), juce::dontSendNotification);
             styleCombo(routeTgt_[i]);
             addAndMakeVisible(routeTgt_[i]);
 
@@ -939,11 +1038,8 @@ private:
         addAndMakeVisible(discBtn_);
 
         discTgt_ = new juce::ComboBox("dt");
-        discTgt_->addItem("t0", 1);
-        discTgt_->addItem("t1", 2);
-        discTgt_->addItem("t2", 3);
-        discTgt_->addItem("t3", 4);
-        discTgt_->addItem("t4", 5);
+        for (int k = 0; k < (int) targetEn_.size(); ++k)
+            discTgt_->addItem("t" + juce::String(k), k + 1);
         discTgt_->setSelectedId(1, juce::dontSendNotification);
         styleCombo(discTgt_);
         addAndMakeVisible(discTgt_);
@@ -1051,9 +1147,14 @@ private:
     juce::Label* tgtColEn_ = nullptr;
     juce::Label* tgtColIp_ = nullptr;
     juce::Label* tgtColPt_ = nullptr;
-    juce::ToggleButton* targetEn_[ProxyConfig::kMaxTargets] = {};
-    juce::TextEditor* targetIp_[ProxyConfig::kMaxTargets] = {};
-    juce::TextEditor* targetPort_[ProxyConfig::kMaxTargets] = {};
+    // Dynamic target rows (unbounded — a normal rig has hundreds). The row
+    // controls are created/destroyed by ADD TARGET / row "x".
+    std::vector<juce::ToggleButton*> targetEn_;
+    std::vector<juce::TextEditor*> targetIp_;
+    std::vector<juce::TextEditor*> targetPort_;
+    std::vector<juce::Button*> targetClr_;
+    juce::Button* addTargetBtn_ = nullptr;
+    int numTargets_ = 0;  // ACTIVE target rows
 
     juce::Label* routesHdr_ = nullptr;
     juce::Label* rtColSrc_ = nullptr;
