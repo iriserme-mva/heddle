@@ -69,6 +69,20 @@ jobs:
           echo "--- core OSC perf report ---"
           cat osc_perf_core.txt
 
+      - name: "Store perf JSON (policy: one JSON per commit, in-repo)"
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: python tools/perf_to_json.py --txt osc_perf_core.txt --repo . --commit "${GITHUB_SHA}" --platform "${{ matrix.os }}" --layer core --dest perf_out || true
+
+      - name: Upload core perf JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: osc-perf-json-core-${{ matrix.os }}
+          path: perf_out/*.json
+          if-no-files-found: ignore
+
       - name: Upload core perf report
         if: always()
         uses: actions/upload-artifact@v4
@@ -373,6 +387,20 @@ jobs:
           echo "--- host OSC perf report ---"
           cat osc_perf_host.txt
 
+      - name: "Store perf JSON (policy: one JSON per commit, in-repo)"
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: python tools/perf_to_json.py --txt osc_perf_host.txt --repo . --commit "${GITHUB_SHA}" --platform "${{ matrix.os }}" --layer host --dest perf_out || true
+
+      - name: Upload host perf JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: osc-perf-json-host-${{ matrix.os }}
+          path: perf_out/*.json
+          if-no-files-found: ignore
+
       - name: Upload host perf report
         if: always()
         uses: actions/upload-artifact@v4
@@ -380,3 +408,56 @@ jobs:
           name: osc-perf-host-${{ matrix.os }}
           path: osc_perf_host.txt
           if-no-files-found: ignore
+
+  # Persist the perf policy end-to-end: collect this push's per-platform perf
+  # JSON (uploaded as artifacts by core + host), regenerate the SVG
+  # infographics from the whole perf/ history, and commit both back to the
+  # repo under perf/<commit-sha7>/ + perf/trends/.
+  #
+  # Loop-free by construction: this job only runs when core AND host actually
+  # ran (result == success, i.e. a real code change). Its own commit touches
+  # only perf/, which is NOT in the paths_filter code list, so the next run
+  # skips core+host and therefore skips this job too.
+  perf_commit:
+    needs: [core, host]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        && needs.core.result == 'success' && needs.host.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Collect per-run perf JSON artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: osc-perf-json-*
+          path: perf_out
+
+      - name: Lay JSON into perf/<sha7>/ and build infographics
+        run: |
+          set -e
+          mkdir -p perf
+          # perf_out/<artifact-name>/<platform>-<layer>-<stamp>.json -> perf/<sha7>/
+          for f in perf_out/*/*.json; do
+            [ -e "$f" ] || continue
+            sha=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['commit'][:7])" "$f")
+            mkdir -p "perf/$sha"
+            cp -f "$f" "perf/$sha/$(basename "$f")"
+          done
+          python tools/perf_infographic.py --repo . --only "${GITHUB_SHA:0:7}"
+
+      - name: Commit perf JSON + infographics
+        run: |
+          set -e
+          git config user.name "heddle-perf-bot"
+          git config user.email "perf-bot@users.noreply.github.com"
+          git add -A perf/
+          if git diff --cached --quiet; then
+            echo "No perf changes to commit."
+            exit 0
+          fi
+          n=$(git diff --cached --numstat | wc -l)
+          git commit -m "perf: run results + infographics for ${GITHUB_SHA:0:7} ($n files)"
+          git push origin HEAD:main
