@@ -281,8 +281,14 @@ private:
             while (running_) {
                 const auto now = std::chrono::steady_clock::now();
                 if (now >= target) break;
-                const auto rem = std::chrono::duration_cast<std::chrono::nanoseconds>(target - now).count();
-                std::this_thread::sleep_for(std::chrono::nanoseconds(std::min(rem, (long long)50000000)));
+                const auto rem = std::chrono::duration_cast<std::chrono::nanoseconds>(target - now);
+                // Woken within 50 ms of the target -> sleep the remainder;
+                // further out -> sleep in <=50 ms chunks so a stop() is picked
+                // up promptly. (Compare durations, not .count(): rep type of
+                // nanoseconds differs across stdlibs — long vs long long —
+                // and std::min demands exact type match.)
+                const auto maxChunk = std::chrono::nanoseconds(50000000);
+                std::this_thread::sleep_for(rem < maxChunk ? rem : maxChunk);
             }
         }
     }
