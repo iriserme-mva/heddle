@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="560" viewBox="0 0 1080 560"><rect width="1080" height="560" fill="#0d1117"/><text x="24" y="34" fill="#e6edf3" font-family="Consolas,monospace" font-size="20" font-weight="bold">Heddle OSC perf — core</text><text x="24" y="56" fill="#8b949e" font-family="Consolas,monospace" font-size="13">commit 89ca1ae  |  ubuntu-latest  |  2026-10-17T17:51:42Z  |  schema 1</text>
+<rect x="70" y="98.0" width="760.0" height="45.0" fill="#3fb950" rx="2"/>
+<text x="838.0" y="148.0" fill="#e6edf3" font-family="Consolas,monospace" font-size="14">28.379 us</text>
+<text x="70" y="174.0" fill="#8b949e" font-family="Consolas,monospace" font-size="12">codec encode+decode (mean)</text>
+<rect x="70" y="188.0" width="5.7" height="45.0" fill="#3fb950" rx="2"/>
+<text x="83.7" y="238.0" fill="#e6edf3" font-family="Consolas,monospace" font-size="14">0.213 us</text>
+<text x="70" y="264.0" fill="#8b949e" font-family="Consolas,monospace" font-size="12">param set-path (mean)</text>
+<rect x="70" y="278.0" width="170.4" height="45.0" fill="#3fb950" rx="2"/>
+<text x="248.4" y="328.0" fill="#e6edf3" font-family="Consolas,monospace" font-size="14">6.363 us</text>
+<text x="70" y="354.0" fill="#8b949e" font-family="Consolas,monospace" font-size="12">UDP oneway (mean)</text>
+<rect x="70" y="368.0" width="353.2" height="45.0" fill="#3fb950" rx="2"/>
+<text x="431.2" y="418.0" fill="#e6edf3" font-family="Consolas,monospace" font-size="14">13.19 us</text>
+<text x="70" y="444.0" fill="#8b949e" font-family="Consolas,monospace" font-size="12">set-&gt;ack RTT (mean)</text>
+<text x="530" y="100" fill="#8b949e" font-family="Consolas,monospace" font-size="13">all metrics (schema 1)</text>
+<text x="530" y="122" fill="#8b949e" font-family="Consolas,monospace" font-size="12">codec.max.us</text>
+<text x="1050" y="122" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">87.944</text>
+<text x="530" y="138" fill="#8b949e" font-family="Consolas,monospace" font-size="12">codec.mb_per_s</text>
+<text x="1050" y="138" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">115.9</text>
+<text x="530" y="154" fill="#8b949e" font-family="Consolas,monospace" font-size="12">codec.mparammsg_per_s</text>
+<text x="1050" y="154" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">2.3</text>
+<text x="530" y="170" fill="#8b949e" font-family="Consolas,monospace" font-size="12">codec.p99.us</text>
+<text x="1050" y="170" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">40.175</text>
+<text x="530" y="186" fill="#8b949e" font-family="Consolas,monospace" font-size="12">iters</text>
+<text x="1050" y="186" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">200000</text>
+<text x="530" y="202" fill="#8b949e" font-family="Consolas,monospace" font-size="12">loopback</text>
+<text x="1050" y="202" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">40000</text>
+<text x="530" y="218" fill="#8b949e" font-family="Consolas,monospace" font-size="12">loopback.oneway.max.us</text>
+<text x="1050" y="218" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">55.082</text>
+<text x="530" y="234" fill="#8b949e" font-family="Consolas,monospace" font-size="12">loopback.oneway.median.us</text>
+<text x="1050" y="234" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">6.282</text>
+<text x="530" y="250" fill="#8b949e" font-family="Consolas,monospace" font-size="12">loopback.oneway.p99.us</text>
+<text x="1050" y="250" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">7.053</text>
+<text x="530" y="266" fill="#8b949e" font-family="Consolas,monospace" font-size="12">loopback.rtt.max.us</text>
+<text x="1050" y="266" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">98.874</text>
+<text x="530" y="282" fill="#8b949e" font-family="Consolas,monospace" font-size="12">loopback.rtt.median.us</text>
+<text x="1050" y="282" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">13.014</text>
+<text x="530" y="298" fill="#8b949e" font-family="Consolas,monospace" font-size="12">loopback.rtt.p99.us</text>
+<text x="1050" y="298" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">22.051</text>
+<text x="530" y="314" fill="#8b949e" font-family="Consolas,monospace" font-size="12">nParams</text>
+<text x="1050" y="314" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">64</text>
+<text x="530" y="330" fill="#8b949e" font-family="Consolas,monospace" font-size="12">param.jitter.p99_over_mean</text>
+<text x="1050" y="330" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">1.6</text>
+<text x="530" y="346" fill="#8b949e" font-family="Consolas,monospace" font-size="12">param.max.us</text>
+<text x="1050" y="346" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">40.295</text>
+<text x="530" y="362" fill="#8b949e" font-family="Consolas,monospace" font-size="12">param.max_set_rate_1ms_budget.ksets_per_s</text>
+<text x="1050" y="362" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">4.7</text>
+<text x="530" y="378" fill="#8b949e" font-family="Consolas,monospace" font-size="12">param.median.us</text>
+<text x="1050" y="378" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">0.201</text>
+<text x="530" y="394" fill="#8b949e" font-family="Consolas,monospace" font-size="12">param.msets_per_s</text>
+<text x="1050" y="394" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">4.7</text>
+<text x="530" y="410" fill="#8b949e" font-family="Consolas,monospace" font-size="12">param.p99.us</text>
+<text x="1050" y="410" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">0.341</text>
+<text x="530" y="426" fill="#8b949e" font-family="Consolas,monospace" font-size="12">param.stddev.us</text>
+<text x="1050" y="426" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">0.211</text>
+</svg>
