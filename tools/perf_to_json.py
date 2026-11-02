@@ -55,8 +55,9 @@ def main():
     ap.add_argument("--commit", required=True)
     ap.add_argument("--platform", required=True)
     ap.add_argument("--layer", default="")
+    ap.add_argument("--dest", default="perf")
     a = ap.parse_args()
-    convert(a.txt, a.repo, a.commit, a.platform, a.layer)
+    convert(a.txt, a.repo, a.commit, a.platform, a.layer, a.dest)
 
 
 if __name__ == "__main__":

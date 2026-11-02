@@ -69,7 +69,7 @@ inline float proxyCurveEval(ProxyCurve c, float x, double curvature = 1.0) {
             const float k = (float) curvature;
             const float k01 = (k < 0.1f) ? 0.1f : (k > 10.0f ? 10.0f : k);
             const float t = (c == ProxyCurve::exp) ? x : (1.0f - x);
-            const float y = std::powf(t, 2.0f * k01);
+            const float y = std::pow(t, 2.0f * k01);
             return (c == ProxyCurve::exp) ? y : (1.0f - y);
         }
         case ProxyCurve::scurve: {

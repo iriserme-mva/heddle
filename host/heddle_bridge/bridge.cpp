@@ -73,6 +73,8 @@
 #if JUCE_WINDOWS
 #include <windows.h>
 #include <tlhelp32.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace heddle_bridge {
