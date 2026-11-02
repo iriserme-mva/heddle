@@ -1,4 +1,5 @@
 #pragma once
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -41,24 +42,49 @@ struct ProxyTarget {
 enum class ProxyCurve {
     identity,  // y = x (default)
     linear,    // == identity (alias kept for explicit configs)
-    exp,       // y = x^2      (fades / gain trims: slow out)
-    invexp,    // y = 1-(1-x)^2 (snappy start, slow out)
-    scurve,    // S-shape around 0.5 (sharper mid)
+    exp,       // y = x^K      (fades / gain trims: slow out; K=1 == x^2)
+    invexp,    // y = 1-(1-x)^K (snappy start, slow out; K=1 == the old 2nd power)
+    scurve,    // S-shape around 0.5 (see curvature; 0=linear, 1=smoothstep)
 };
 
-inline float proxyCurveEval(ProxyCurve c, float x) {
+// Shape a [0,1] value with the given curve. `curvature` is the single per-
+// route steepness knob, gamma-style:
+//   exp/invexp : y = x^K / 1-(1-x)^K, K clamped to [0.1, 10].
+//                K = 1 reproduces the historical x^2 / 1-(1-x)^2 exactly
+//                (backward compatible default); K < 1 snaps to the start,
+//                K > 1 softens the output.
+//   scurve     : 0 = straight line, 1 = the classic smoothstep, (1, 2]
+//                re-applies the S so the mid gets steeper (K = 2 ==
+//                smoothstep-of-smoothstep); clamped to [0, 2].
+// identity/linear ignore it. Every case is monotonic and maps [0,1] -> [0,1].
+inline float proxyCurveEval(ProxyCurve c, float x, double curvature = 1.0) {
     if (x < 0.0f) x = 0.0f;
     if (x > 1.0f) x = 1.0f;
     switch (c) {
         case ProxyCurve::exp:
-            return x * x;
         case ProxyCurve::invexp: {
-            const float i = 1.0f - x;
-            return 1.0f - i * i;
+            // Gamma-style: the curve is the identity power map raised to K.
+            // K = 1 is the old 2nd-power behaviour, so stored configs and
+            // old UI states keep their shape untouched.
+            const float k = (float) curvature;
+            const float k01 = (k < 0.1f) ? 0.1f : (k > 10.0f ? 10.0f : k);
+            const float t = (c == ProxyCurve::exp) ? x : (1.0f - x);
+            const float y = std::powf(t, 2.0f * k01);
+            return (c == ProxyCurve::exp) ? y : (1.0f - y);
         }
         case ProxyCurve::scurve: {
-            // 3x^2 - 2x^3 (smoothstep): monotonic, 0->0, 1->1, kink-free.
-            return x * x * (3.0f - 2.0f * x);
+            const float k = (float) curvature;
+            const float k02 = (k < 0.0f) ? 0.0f : (k > 2.0f ? 2.0f : k);
+            // Pass 1: blend line -> smoothstep (weight clamped to [0,1] so
+            // the convex combination stays monotonic and in-range).
+            const float w1 = (k02 > 1.0f) ? 1.0f : k02;
+            const auto sstep = [](float v) { return v * v * (3.0f - 2.0f * v); };
+            float y = (1.0f - w1) * x + w1 * sstep(x);
+            // Pass 2 (k > 1): re-shape for a steeper mid; composition of
+            // monotonic endpoint-fixing maps stays monotonic and in-range.
+            if (k02 > 1.0f)
+                y = (1.0f - (k02 - 1.0f)) * y + (k02 - 1.0f) * sstep(y);
+            return y;
         }
         case ProxyCurve::identity:
         case ProxyCurve::linear:
@@ -105,6 +131,11 @@ struct ProxyRoute {
     double inMin = 0.0;
     double inMax = 1.0;
     ProxyCurve curve = ProxyCurve::identity;
+    // Curve steepness knob K (gamma-style). exp/invexp: y = x^K / 1-(1-x)^K
+    // (K = 1 is the historical 2nd power). scurve: 0 = straight line,
+    // 1 = classic smoothstep (default), (1, 2] = steeper mid. Ignored by
+    // identity/linear. See proxyCurveEval.
+    double curvature = 1.0;
 };
 
 struct ProxyConfig {

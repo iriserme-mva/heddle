@@ -270,17 +270,19 @@ private:
                 // accumulate into a catch-up burst.
                 target = std::chrono::steady_clock::now();
             }
-            // Absolute-schedule sleep: sleep_for(pollMs_) would drift on
-            // Windows (15 ms timer granularity) and slowly desync input/pump,
-            // corrupting the round-trip sample accounting. Sleep until near the
-            // target, then busy-spin the last ~2 ms for sub-millisecond
-            // accuracy (the window is tiny, so the CPU cost is negligible).
+            // Sleep until the target — no busy-spin. The earlier version
+            // spun the last 2 ms of every block for sub-millisecond wake-up
+            // accuracy, but on Windows that was ~1 ms of spin per 21 ms block
+            // (48k/1024), i.e. ~9% of a core at idle with no traffic. The
+            // absolute schedule plus the 16-block ring capacity absorb the
+            // ~15.6 ms timer granularity; a late wake just delays one block,
+            // it never desyncs the round-trip accounting (target only ever
+            // advances when a block actually ran, and stalls re-anchor it).
             while (running_) {
                 const auto now = std::chrono::steady_clock::now();
                 if (now >= target) break;
                 const auto rem = std::chrono::duration_cast<std::chrono::nanoseconds>(target - now).count();
-                if (rem > 2000000)
-                    std::this_thread::sleep_for(std::chrono::nanoseconds(rem - 2000000));
+                std::this_thread::sleep_for(std::chrono::nanoseconds(std::min(rem, (long long)50000000)));
             }
         }
     }
@@ -385,12 +387,41 @@ public:
                 heddle::AudioRing::remove(ringInName_);
             if (heddle::AudioRing::exists(ringOutName_))
                 heddle::AudioRing::remove(ringOutName_);
-            ringIn_ = heddle::AudioRing::create(ringInName_, cap, nch, cfg_.sampleRate, &err);
+            // Retry briefly on "already exists": on Windows a named section
+            // is only destroyed when its LAST handle closes, so a still-open
+            // HeddleBridge (its 1 Hz timer releases stale handles within a
+            // second of the host dying) can keep the old section alive for
+            // an instant after a stop/kill. Waiting out that window makes
+            // stop -> start seamless instead of failing once.
+            auto createWithRetry = [&](const std::string& name) {
+                for (int attempt = 0; attempt < 40; ++attempt) {
+                    std::string cerr;
+                    heddle::AudioRing r = heddle::AudioRing::create(
+                        name, cap, nch, cfg_.sampleRate, &cerr);
+                    if (r.valid()) return r;
+                    const bool stale =
+                        cerr.find("already exists") != std::string::npos;
+                    if (!stale) {
+                        err = cerr;
+                        return heddle::AudioRing();
+                    }
+                    if (attempt == 0)
+                        logInfo("ring " + name +
+                                " still held by a previous bridge; "
+                                "waiting for it to release...");
+                    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                }
+                err = "a ring named '" + name +
+                      "' already exists (a previous HeddleBridge or "
+                      "heddle-host is still holding it)";
+                return heddle::AudioRing();
+            };
+            ringIn_ = createWithRetry(ringInName_);
             if (!ringIn_.valid()) {
                 logErr("ring create " + ringInName_ + ": " + err);
                 return 1;
             }
-            ringOut_ = heddle::AudioRing::create(ringOutName_, cap, nch, cfg_.sampleRate, &err);
+            ringOut_ = createWithRetry(ringOutName_);
             if (!ringOut_.valid()) {
                 logErr("ring create " + ringOutName_ + ": " + err);
                 ringIn_.close();

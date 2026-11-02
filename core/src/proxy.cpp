@@ -95,6 +95,8 @@ ProxyRoute routeFromJson(const json& o, std::string& err) {
         if (proxyCurveFromName(o["curve"].get<std::string>(), &cv))
             r.curve = cv;
     }
+    if (o.contains("curvature") && o["curvature"].is_number())
+        r.curvature = o["curvature"].get<double>();
     (void) err;
     return r;
 }
@@ -159,12 +161,24 @@ std::string dump(const ProxyConfig& c) {
                                {"enabled", t.enabled}});
     j["targets"] = std::move(targets);
     json routes = json::array();
-    for (const auto& r : c.routes)
-        routes.push_back(json{{"src", r.srcAddr}, {"target", r.targetIdx},
-                              {"slot", r.slot}, {"param", r.param},
-                              {"arg", r.arg}, {"in_min", r.inMin},
-                              {"in_max", r.inMax},
-                              {"curve", proxyCurveName(r.curve)}});
+    for (const auto& r : c.routes) {
+        json ro{
+            {"src", r.srcAddr}, {"target", r.targetIdx},
+            {"slot", r.slot},    {"param", r.param},
+            {"arg", r.arg},      {"in_min", r.inMin},
+            {"in_max", r.inMax}, {"curve", proxyCurveName(r.curve)}};
+        // Curvature (K) is meaningful for scurve, exp and invexp. scurve
+        // always stores it (historical behaviour); exp/invexp only when it
+        // differs from the default 1.0 (= the old fixed 2nd power), so old
+        // configs round-trip byte-identical.
+        if (r.curve == ProxyCurve::scurve) {
+            ro["curvature"] = r.curvature;
+        } else if ((r.curve == ProxyCurve::exp || r.curve == ProxyCurve::invexp) &&
+                   r.curvature != 1.0) {
+            ro["curvature"] = r.curvature;
+        }
+        routes.push_back(std::move(ro));
+    }
     j["routes"] = std::move(routes);
     return j.dump(2);
 }
@@ -331,7 +345,7 @@ int ProxyEngine::pump() {
                 }
                 const std::string addr = "/chain/" + r.slot + "/" + r.param;
                 OscMsg out = OscMsg::make(addr);
-                out.floats.push_back(proxyCurveEval(r.curve, x));
+                out.floats.push_back(proxyCurveEval(r.curve, x, r.curvature));
                 out.typeTags.push_back('f');
                 // Non-float args pass through untouched (ints/strings keep
                 // their position in the message).

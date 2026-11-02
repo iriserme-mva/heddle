@@ -104,6 +104,34 @@ static const char* kHostExeName = "heddle-host.exe";
 static const char* kHostExeName = "heddle-host";
 #endif
 
+// Is a heddle-host running right now? Windows: Toolhelp snapshot matched
+// against the real process image name (kHostExeName — note the ".exe":
+// pe.szExeFile on Windows is the image name WITH the extension, so matching
+// the extension-less name would never fire and stop-host would report
+// "No running heddle-host found." while a zombie kept holding the rings).
+// POSIX: pgrep -x (exact name; best effort).
+static bool heddleHostRunning() {
+#if JUCE_WINDOWS
+    const HANDLE snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    bool found = false;
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof(pe);
+    if (::Process32FirstW(snap, &pe)) {
+        do {
+            if (juce::String(pe.szExeFile).equalsIgnoreCase(kHostExeName)) {
+                found = true;
+                break;
+            }
+        } while (::Process32NextW(snap, &pe));
+    }
+    ::CloseHandle(snap);
+    return found;
+#else
+    return std::system("pgrep -x heddle-host >/dev/null 2>&1") == 0;
+#endif
+}
+
 class BridgeProcessor;
 class BridgeEditor;  // forward decls (editor ctor takes BridgeProcessor&)
 
@@ -258,6 +286,16 @@ public:
 
     // Timer ----------------------------------------------------------------
     void timerCallback() override {
+        // Stale-handle release: if both rings were attached but the host
+        // process is gone, our file-mapping handles keep the Windows named
+        // sections alive (a section only dies when its LAST handle closes),
+        // so a fresh heddle-host would fail with "ring already exists". Drop
+        // the handles so the section can be reclaimed; the lazy attach below
+        // then re-opens once a live host recreates it.
+        if (ringIn_.valid() && ringOut_.valid() && !heddleHostRunning()) {
+            ringIn_.close();
+            ringOut_.close();
+        }
         // Lazy attach. open() with a short timeout keeps the message thread
         // responsive: it returns as soon as the ring is ready or after 100 ms.
         if (!ringIn_.valid()) {
@@ -1059,7 +1097,7 @@ private:
                 if (::Process32FirstW(snap, &pe)) {
                     do {
                         if (juce::String(pe.szExeFile).equalsIgnoreCase(
-                                "heddle-host")) {
+                                kHostExeName)) {
                             HANDLE hProc =
                                 ::OpenProcess(PROCESS_TERMINATE, FALSE,
                                               pe.th32ProcessID);

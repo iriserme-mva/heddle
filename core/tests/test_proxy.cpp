@@ -176,10 +176,10 @@ TEST_CASE("proxy curve eval: shapes, clamping, name round-trip") {
     // Identity / linear.
     CHECK(proxyCurveEval(ProxyCurve::identity, 0.25f) == doctest::Approx(0.25f));
     CHECK(proxyCurveEval(ProxyCurve::linear, 0.75f) == doctest::Approx(0.75f));
-    // exp = x^2.
+    // exp / invexp: the same gamma-style K knob (K = 1 is the historical
+    // 2nd power — these are the default-K values).
     CHECK(proxyCurveEval(ProxyCurve::exp, 0.5f) == doctest::Approx(0.25f));
     CHECK(proxyCurveEval(ProxyCurve::exp, 0.2f) == doctest::Approx(0.04f));
-    // invexp = 1 - (1-x)^2.
     CHECK(proxyCurveEval(ProxyCurve::invexp, 0.5f) == doctest::Approx(0.75f));
     CHECK(proxyCurveEval(ProxyCurve::invexp, 0.2f) == doctest::Approx(0.36f));
     // scurve = 3x^2 - 2x^3 (smoothstep): midpoint fixed, monotonic, kink-free.
@@ -191,6 +191,72 @@ TEST_CASE("proxy curve eval: shapes, clamping, name round-trip") {
     // Clamping at both ends.
     CHECK(proxyCurveEval(ProxyCurve::exp, -1.0f) == doctest::Approx(0.0f));
     CHECK(proxyCurveEval(ProxyCurve::scurve, 2.0f) == doctest::Approx(1.0f));
+
+    // Curvature: 0 = straight line, 1 = classic smoothstep, >1 steeper mid.
+    // (smoothstep(0.25) = 3*0.0625 - 2*0.015625 = 0.15625, precomputed.)
+    CHECK(proxyCurveEval(ProxyCurve::scurve, 0.25f, 0.0) == doctest::Approx(0.25f));
+    CHECK(proxyCurveEval(ProxyCurve::scurve, 0.5f, 0.0) == doctest::Approx(0.5f));
+    CHECK(proxyCurveEval(ProxyCurve::scurve, 0.25f, 1.0) == doctest::Approx(0.15625f));
+    {
+        const float y25_k1 = proxyCurveEval(ProxyCurve::scurve, 0.25f, 1.0);
+        const float y25_k2 = proxyCurveEval(ProxyCurve::scurve, 0.25f, 2.0);
+        const float y75_k1 = proxyCurveEval(ProxyCurve::scurve, 0.75f, 1.0);
+        const float y75_k2 = proxyCurveEval(ProxyCurve::scurve, 0.75f, 2.0);
+        CHECK(y25_k2 < y25_k1);  // steeper mid: below the line lower
+        CHECK(y75_k2 > y75_k1);  // above the line higher
+    }
+    // Clamped: k<0 behaves as 0 (line), k>2 saturates the second pass.
+    CHECK(proxyCurveEval(ProxyCurve::scurve, 0.3f, -5.0) == doctest::Approx(0.3f));
+    CHECK(proxyCurveEval(ProxyCurve::scurve, 0.0f, 2.0) == doctest::Approx(0.0f));
+    CHECK(proxyCurveEval(ProxyCurve::scurve, 1.0f, 2.0) == doctest::Approx(1.0f));
+    {
+        const float y399 = proxyCurveEval(ProxyCurve::scurve, 0.3f, 99.0);
+        const float y32 = proxyCurveEval(ProxyCurve::scurve, 0.3f, 2.0);
+        CHECK(y399 == y32);  // clamped at 2
+    }
+    // Monotonic over [0,1] for the extreme curvature.
+    {
+        float prev = -1.0f;
+        for (int i = 0; i <= 200; ++i) {
+            const float x = 0.0f + 1.0f * i / 200.0f;
+            const float y = proxyCurveEval(ProxyCurve::scurve, x, 2.0);
+            CHECK(y >= prev);
+            CHECK(y >= 0.0f);
+            CHECK(y <= 1.0f);
+            prev = y;
+        }
+    }
+    // Gamma-style K on exp/invexp: y = x^(2K) / 1-(1-x)^(2K). K = 1 is the
+    // old fixed 2nd power; K < 1 snaps to the start, K > 1 softens it.
+    CHECK(proxyCurveEval(ProxyCurve::exp, 0.5f, 1.0) == doctest::Approx(0.25f));
+    CHECK(proxyCurveEval(ProxyCurve::invexp, 0.5f, 1.0) == doctest::Approx(0.75f));
+    {
+        const float e1 = proxyCurveEval(ProxyCurve::exp, 0.4f, 1.0);
+        const float e2 = proxyCurveEval(ProxyCurve::exp, 0.4f, 2.0);
+        const float i1 = proxyCurveEval(ProxyCurve::invexp, 0.4f, 1.0);
+        const float i2 = proxyCurveEval(ProxyCurve::invexp, 0.4f, 2.0);
+        CHECK(e2 < e1);  // steeper: lower below the midpoint
+        CHECK(i2 > i1);  // snappier: higher below the midpoint
+        // K = 0.5 gives the sqrt of the old 2nd power (x^1).
+        CHECK(proxyCurveEval(ProxyCurve::exp, 0.3f, 0.5) == doctest::Approx(0.3f));
+    }
+    {
+        // Monotonic + in-range over [0,1] for an extreme exp K.
+        float prev = -1.0f;
+        for (int i = 0; i <= 200; ++i) {
+            const float x = 0.0f + 1.0f * i / 200.0f;
+            const float y = proxyCurveEval(ProxyCurve::exp, x, 10.0);
+            CHECK(y >= prev);
+            CHECK(y >= 0.0f);
+            CHECK(y <= 1.0f);
+            prev = y;
+        }
+    }
+    // K clamps to [0.1, 10] on the power curves.
+    CHECK(proxyCurveEval(ProxyCurve::exp, 0.5f, 0.1) == proxyCurveEval(ProxyCurve::exp, 0.5f, -3.0));
+    CHECK(proxyCurveEval(ProxyCurve::invexp, 0.5f, 10.0) == proxyCurveEval(ProxyCurve::invexp, 0.5f, 99.0));
+    // Curvature is still ignored by identity/linear.
+    CHECK(proxyCurveEval(ProxyCurve::identity, 0.5f, 2.0) == doctest::Approx(0.5f));
 
     // Name round-trip (eval shapes themselves are checked above).
     const char* names[] = {"identity", "linear", "exp", "invexp", "scurve"};
