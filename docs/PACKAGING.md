@@ -2,7 +2,7 @@
 
 How Heddle release artifacts are built, what goes where, and — critically —
 how they get to the user given provider policy. This is the baseline as of
-v0.1.8 (2026-10-26); everything here is reproducible via
+v0.1.9 (2026-11-03); everything here is reproducible via
 `scripts/build_package.ps1`.
 
 ## Windows package (implemented, `scripts/build_package.ps1`)

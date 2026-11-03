@@ -3,7 +3,7 @@
   Heddle Windows MSI (WiX 3.14, per-machine, x64).
 
   Installs:
-    C:\Program Files\Heddle_v0.1.8\            (install dir, editable in the installer UI)
+    C:\Program Files\Heddle_v0.1.9\            (install dir, editable in the installer UI)
         bin\      heddle-host.exe, heddle-render.exe, heddle-proxy.exe
         LICENSE, README.txt
     [VST3DIR]\                                 plugin dir, EDITABLE FIELD in the installer UI
@@ -23,7 +23,7 @@
   Back point at HeddleInstallDirDlg) so the flow goes through the extended
   dialog; the stock InstallDirDlg stays in the package, merely unrouted.
 
-  Start menu:  Start > All Programs > Heddle_v0.1.8 >
+  Start menu:  Start > All Programs > Heddle_v0.1.9 >
                   Heddle Host / Heddle Render / Heddle Proxy
   Install is per-machine (UAC elevation on double-click is normal for Program Files);
   uninstall via Settings > Apps > Heddle.
@@ -36,13 +36,13 @@
 
   <Product Id="*"
            Name="Heddle"
-           Version="0.1.8.0"
+           Version="0.1.9.0"
            Manufacturer="iriserme-mva"
            Language="1033"
            UpgradeCode="7A1B6E52-9C3F-4D2A-B4E1-6F0D5C8A3E91">
 
     <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine"
-             Description="Heddle 0.1.8 - audio chain host, offline renderer, OSC proxy and VST3 plugins"
+             Description="Heddle 0.1.9 - audio chain host, offline renderer, OSC proxy and VST3 plugins"
              Comments="Personal / non-commercial use. Licence: see LICENSE in the install folder."/>
 
     <MediaTemplate EmbedCab="yes"/>
@@ -152,7 +152,7 @@
            makes the directory tree 64-bit so -arch x64 components (attrs=256)
            pass ICE80. On a 64-bit OS it resolves to C:\Program Files. -->
       <Directory Id="ProgramFiles64Folder">
-        <Directory Id="INSTALLDIR" Name="Heddle_v0.1.8">
+        <Directory Id="INSTALLDIR" Name="Heddle_v0.1.9">
           <Directory Id="BINDIR" Name="bin">
             <Component Id="cmpHost" Guid="*">
               <File Id="fHost" Source="$(var.HEDDLE_SRC)\bin\heddle-host.exe"
@@ -234,12 +234,12 @@
       </Directory>
 
       <Directory Id="ProgramMenuFolder">
-        <Directory Id="MENUROOT" Name="Heddle_v0.1.8">
+        <Directory Id="MENUROOT" Name="Heddle_v0.1.9">
           <Component Id="cmpMenu" Guid="75BB8473-6F14-4923-9374-A26DCC44E8B2">
             <!-- ICE43: a non-advertised shortcut component must key on an
                  HKCU registry key, not a file. -->
             <RegistryKey Root="HKCU" Key="Software\Heddle">
-              <RegistryValue Name="InstalledVersion" Type="string" Value="0.1.8"/>
+              <RegistryValue Name="InstalledVersion" Type="string" Value="0.1.9"/>
             </RegistryKey>
             <Shortcut Id="MenuHost" Name="Heddle Host"
                       Target="[BINDIR]heddle-host.exe"
