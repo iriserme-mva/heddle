@@ -406,10 +406,11 @@ private:
 };
 
 // ===========================================================================
-// Shared route-table caps. GUI-editor cap only — the core is unbounded.
-// File-scope so RouteTable (below) can use them before ProxyEditor exists.
+// Shared route-table defaults. The route table is DYNAMIC (resizable
+// std::vectors, exactly like the core's unbounded std::vector<ProxyRoute>);
+// kDefaultRoutes only sets the starting size. File-scope so HeddleContent
+// (below) can use it before ProxyEditor exists.
 // ===========================================================================
-constexpr int kMaxRoutes = 64;
 constexpr int kDefaultRoutes = 8;
 
 // ===========================================================================
@@ -516,16 +517,6 @@ public:
                                                   HeddlePalette::baseTop());
         rowsVp_->setViewedComponent(rowsHost_, false);
         addAndMakeVisible(rowsVp_);
-        // Continuous route index labels (#1, #2, ...): row i always shows
-        // #(i+1) (rows are numbered from the top), so the texts are fixed at
-        // build time and only the positions travel with the scroll.
-        for (int i = 0; i < kMaxRoutes; ++i) {
-            idx_[i] = new juce::Label("ri" + juce::String(i), "#" + juce::String(i + 1));
-            idx_[i]->setFont(hf(10.8f, juce::Font::bold));
-            idx_[i]->setColour(juce::Label::textColourId, HeddlePalette::textDim());
-            idx_[i]->setJustificationType(juce::Justification::centred);
-            rowsHost_->addAndMakeVisible(idx_[i]);
-        }
     }
 
     void setDropCallback(DropCb cb) { cb_ = std::move(cb); }
@@ -540,16 +531,47 @@ public:
             repaint();
         }
     }
-    // The editor owns the row controls and adds them to this table; it tells
-    // us about them here so layout() can position them (table-local coords).
-    void attachRow(int i, juce::TextEditor* src, juce::ComboBox* tgt,
-                   juce::TextEditor* slot, juce::TextEditor* param,
-                   juce::TextEditor* arg, juce::TextEditor* min,
-                   juce::TextEditor* max, juce::ComboBox* curve,
-                   juce::TextEditor* k, juce::Button* clr) {
-        src_[i] = src; tgt_[i] = tgt; slot_[i] = slot; param_[i] = param;
-        arg_[i] = arg; min_[i] = min; max_[i] = max; curve_[i] = curve;
-        kEd_[i] = k; clr_[i] = clr;
+    // The editor owns the row controls and adds them to this table; it
+    // registers them here (in row order) so layout() can position them
+    // (table-local coords). The continuous # index label is created here too
+    // (this table owns it): row i always shows #(i+1) — rows are numbered
+    // from the top and renumbered after a removal (renumberIndex()).
+    void pushRow(juce::TextEditor* src, juce::ComboBox* tgt,
+                 juce::TextEditor* slot, juce::TextEditor* param,
+                 juce::TextEditor* arg, juce::TextEditor* min,
+                 juce::TextEditor* max, juce::ComboBox* curve,
+                 juce::TextEditor* k, juce::Button* clr) {
+        auto* id = new juce::Label("ri" + juce::String(idx_.size()),
+                                   "#" + juce::String(idx_.size() + 1));
+        id->setFont(hf(10.8f, juce::Font::bold));
+        id->setColour(juce::Label::textColourId, HeddlePalette::textDim());
+        id->setJustificationType(juce::Justification::centred);
+        rowsHost_->addAndMakeVisible(id);
+        idx_.push_back(id);
+        src_.push_back(src); tgt_.push_back(tgt); slot_.push_back(slot);
+        param_.push_back(param); arg_.push_back(arg); min_.push_back(min);
+        max_.push_back(max); curve_.push_back(curve); kEd_.push_back(k);
+        clr_.push_back(clr);
+    }
+    // Drop the last row's registered controls. The # index label is deleted
+    // here (this table owns it); the 10 row controls are deleted by the
+    // editor (removeRouteRow) before it calls this.
+    void popRow() {
+        if (!idx_.empty()) {
+            delete idx_.back();
+            idx_.pop_back();
+        }
+        if (!src_.empty()) {
+            src_.pop_back(); tgt_.pop_back(); slot_.pop_back();
+            param_.pop_back(); arg_.pop_back(); min_.pop_back();
+            max_.pop_back(); curve_.pop_back(); kEd_.pop_back();
+            clr_.pop_back();
+        }
+    }
+    // Rows shifted up after a removal — refresh the # labels.
+    void renumberIndex() {
+        for (size_t i = 0; i < idx_.size(); ++i)
+            idx_[i]->setText("#" + juce::String(i + 1), juce::dontSendNotification);
     }
     void attachHeaderLabels(juce::Label* hdr, juce::Label* cSrc, juce::Label* cTgt,
                             juce::Label* cSlot, juce::Label* cParam, juce::Label* cArg,
@@ -609,13 +631,13 @@ public:
             rowsHost_->setSize(getWidth(), activeRows_ * HeddleLayout::rRowH + 4);
         }
         // Row controls are HOST-local (the viewport applies its scroll
-        // offset itself); row i sits at y = i * rRowH inside the host.
-        for (int i = 0; i < activeRows_; ++i) {
+        // offset itself); row i sits at y = i * rRowH inside the host. The
+        // rows are dynamic (std::vector), so never index past the end even
+        // if activeRows_ and the registered rows briefly disagree.
+        const int n = juce::jmin(activeRows_, (int) src_.size());
+        for (int i = 0; i < n; ++i) {
             const int y = i * HeddleLayout::rRowH;
-            if (idx_[i] != nullptr) {
-                idx_[i]->setVisible(true);
-                idx_[i]->setBounds(col(0).x, y + 5, col(0).w, 24);
-            }
+            idx_[i]->setBounds(col(0).x, y + 5, col(0).w, 24);
             src_[i]->setBounds(col(1).x, y, col(1).w, 24);
             tgt_[i]->setBounds(col(2).x, y, col(2).w, 26);
             slot_[i]->setBounds(col(3).x, y, col(3).w, 24);
@@ -627,8 +649,6 @@ public:
             kEd_[i]->setBounds(col(9).x, y, col(9).w - 2, 24);
             clr_[i]->setBounds(col(10).x, y + 2, col(10).w, 26);
         }
-        for (int i = activeRows_; i < kMaxRoutes; ++i)
-            if (idx_[i] != nullptr) idx_[i]->setVisible(false);
     }
 
     // ---- DragAndDropTarget ------------------------------------------------
@@ -726,19 +746,22 @@ private:
     juce::Label* cMax_ = nullptr;
     juce::Label* cCurve_ = nullptr;
     juce::Label* cK_ = nullptr;
-    juce::TextEditor* src_[kMaxRoutes] = {};
-    juce::ComboBox* tgt_[kMaxRoutes] = {};
-    juce::TextEditor* slot_[kMaxRoutes] = {};
-    juce::TextEditor* param_[kMaxRoutes] = {};
-    juce::TextEditor* arg_[kMaxRoutes] = {};
-    juce::TextEditor* min_[kMaxRoutes] = {};
-    juce::TextEditor* max_[kMaxRoutes] = {};
-    juce::ComboBox* curve_[kMaxRoutes] = {};
-    juce::TextEditor* kEd_[kMaxRoutes] = {};
-    juce::Button* clr_[kMaxRoutes] = {};
+    // Dynamic rows (std::vector, unbounded — the core's
+    // std::vector<ProxyRoute> is unbounded too, so the editor is not
+    // artificially capped at 64).
+    std::vector<juce::TextEditor*> src_;
+    std::vector<juce::ComboBox*> tgt_;
+    std::vector<juce::TextEditor*> slot_;
+    std::vector<juce::TextEditor*> param_;
+    std::vector<juce::TextEditor*> arg_;
+    std::vector<juce::TextEditor*> min_;
+    std::vector<juce::TextEditor*> max_;
+    std::vector<juce::ComboBox*> curve_;
+    std::vector<juce::TextEditor*> kEd_;
+    std::vector<juce::Button*> clr_;
     juce::Component* rowsHost_ = nullptr;
     juce::Viewport* rowsVp_ = nullptr;
-    juce::Label* idx_[kMaxRoutes] = {};
+    std::vector<juce::Label*> idx_;
 };
 
 // ===========================================================================
@@ -764,12 +787,13 @@ class ProxyEditor : public juce::AudioProcessorEditor,
 public:
     explicit ProxyEditor(ProxyProcessor& owner)
         : juce::AudioProcessorEditor(owner), owner_(owner) {
-        // The tables are dynamic: routes start with the stored routes (min 8
-        // so the default layout is familiar), targets with the stored targets
-        // (min 1); ADD ROUTE / ADD TARGET grow them from there.
-        numRows_ = (int) juce::jlimit((int) kDefaultRoutes, (int) kMaxRoutes,
-                                      (int) std::max<size_t>(kDefaultRoutes,
-                                                              owner_.cfg_.routes.size()));
+        // The tables are dynamic: routes start with the stored routes (min
+        // kDefaultRoutes so the default layout is familiar), targets with the
+        // stored targets (min 1); ADD ROUTE / ADD TARGET grow them from
+        // there. The route count is UNBOUNDED — the core's
+        // std::vector<ProxyRoute> has no cap, so the editor matches it.
+        numRows_ = (int) std::max<size_t>((size_t) kDefaultRoutes,
+                                          owner_.cfg_.routes.size());
         numTargets_ = std::max(1, (int) owner_.cfg_.targets.size());
         // The window is capped (HeddleLayout::winCapH); when the content
         // outgrows it the Viewport scrolls the overflow instead of the whole
@@ -880,7 +904,7 @@ public:
             if (targetPort_[i] != nullptr) targetPort_[i]->setReadOnly(on);
             if (targetEn_[i] != nullptr) targetEn_[i]->setEnabled(!on);
         }
-        for (int i = 0; i < kMaxRoutes; ++i) {
+        for (size_t i = 0; i < routeSrc_.size(); ++i) {
             routeSrc_[i]->setReadOnly(on);
             routeSlot_[i]->setReadOnly(on);
             routeParam_[i]->setReadOnly(on);
@@ -908,7 +932,7 @@ public:
         // Keep target dropdowns inside the live row count (a route row's TGT
         // or the DISCOVER combo may predate a removed target row).
         const int tN = std::max(1, (int) targetEn_.size());
-        for (int i = 0; i < kMaxRoutes; ++i)
+        for (size_t i = 0; i < routeTgt_.size(); ++i)
             if (routeTgt_[i]->getSelectedId() > tN)
                 routeTgt_[i]->setSelectedId(tN, juce::dontSendNotification);
         if (discTgt_->getSelectedId() > tN)
@@ -1029,10 +1053,6 @@ public:
     }
 
 private:
-    // Hard cap on route rows. The table was a fixed 8; it is now dynamic —
-    // ADD ROUTE appends, each row's "x" removes it, and the editor resizes.
-    static constexpr int kMaxRoutes = 64;
-    static constexpr int kDefaultRoutes = 8;
 
     static juce::String modeLabel(const std::string& m) {
         if (m == "off") return "OFF";
@@ -1142,7 +1162,7 @@ private:
     // dropdowns only ever point at rows that exist; the 4 Hz timer applies the
     // same rule, so a stale selection is self-correcting.
     void rebuildTargetItems() {
-        for (int i = 0; i < kMaxRoutes; ++i) {
+        for (size_t i = 0; i < routeTgt_.size(); ++i) {
             const int sel = routeTgt_[i]->getSelectedId();
             routeTgt_[i]->clear(juce::dontSendNotification);
             for (int k = 0; k < (int) targetEn_.size(); ++k)
@@ -1182,14 +1202,18 @@ private:
         targetPort_.back()->setJustification(juce::Justification::centredLeft);
         styleInput(targetPort_.back());
         targetsHost_->addAndMakeVisible(targetPort_.back());
-        const int row = (int) targetEn_.size() - 1;
-        targetClr_.push_back(new HeddleButton("tx" + juce::String(row), "x",
-                                              HeddleButton::Kind::Neutral));
-        targetClr_.back()->onClick = [this, row] {
+        // The button resolves its row at CLICK time (pointer lookup) instead
+        // of capturing the index: after any removal the rows below shift up
+        // and a captured index would be stale (wrong row deleted / no-op).
+        auto* txBtn = new HeddleButton("tx" + juce::String(targetClr_.size()), "x",
+                                       HeddleButton::Kind::Neutral);
+        txBtn->onClick = [this, txBtn] {
             if (locked_) return;
-            removeTargetRow(row);
+            for (size_t r = 0; r < targetClr_.size(); ++r)
+                if (targetClr_[r] == txBtn) { removeTargetRow((int) r); break; }
         };
-        targetsHost_->addAndMakeVisible(targetClr_.back());
+        targetClr_.push_back(txBtn);
+        targetsHost_->addAndMakeVisible(txBtn);
         ++numTargets_;
         refreshLayout();
         status_->setText("target row added - press APPLY", juce::dontSendNotification);
@@ -1232,24 +1256,6 @@ private:
         content_->setCounts(numTargets_, numRows_);
         resized();
     }
-    // Show / hide one whole route row's 9 controls. All kMaxRoutes rows are
-    // built up front (so ADD ROUTE never dereferences a null control), but
-    // only the active `numRows_` are visible; the rest are added to the
-    // hierarchy but hidden. Re-shown on ADD, hidden on remove (the vacated
-    // row's controls otherwise linger on screen — the "ghost row" bug).
-    void setRouteRowVisible(int row, bool vis) {
-        if (row < 0 || row >= kMaxRoutes) return;
-        routeSrc_[row]->setVisible(vis);
-        routeTgt_[row]->setVisible(vis);
-        routeSlot_[row]->setVisible(vis);
-        routeParam_[row]->setVisible(vis);
-        routeArg_[row]->setVisible(vis);
-        routeMin_[row]->setVisible(vis);
-        routeMax_[row]->setVisible(vis);
-        routeCurve_[row]->setVisible(vis);
-        routeK_[row]->setVisible(vis);
-        routeClr_[row]->setVisible(vis);
-    }
     // Set every control of route row `row` from a config route (defaults if
     // null) — shared by ctor fill, ADD ROUTE and remove-row shifting.
     void setRouteRow(int row, const ProxyRoute* r) {
@@ -1266,31 +1272,127 @@ private:
                                         juce::dontSendNotification);
         routeK_[row]->setText(r ? fmtDbl(r->curvature) : juce::String("1"));
     }
-    void addRouteRow() {
-        if (numRows_ >= kMaxRoutes) {
-            status_->setText("route table is full (" + juce::String(kMaxRoutes)
-                                 + " max) — remove a row first",
-                             juce::dontSendNotification);
-            return;
-        }
-        setRouteRow(numRows_, nullptr);
-        setRouteRowVisible(numRows_, true);   // reveal the pre-built spare row
+    // Create ONE route row (its 10 controls, registered with the table,
+    // which also creates the row's # index label). `r` seeds the values
+    // (null = defaults). Mirrors addTargetRow — the route table is a
+    // resizable std::vector, unbounded like the core's
+    // std::vector<ProxyRoute>.
+    void buildRouteRow(const ProxyRoute* r) {
+        const int i = numRows_;
+        routeSrc_.push_back(new juce::TextEditor("rs" + juce::String(i)));
+        routeSrc_.back()->setText(r ? jstr(r->srcAddr) : juce::String());
+        routeSrc_.back()->setJustification(juce::Justification::centredLeft);
+        styleInput(routeSrc_.back());
+        routeTable_->rowsHost()->addAndMakeVisible(routeSrc_.back());
+
+        routeTgt_.push_back(new juce::ComboBox("rt" + juce::String(i)));
+        const int tN = std::max(1, (int) targetEn_.size());
+        for (int k = 0; k < tN; ++k)
+            routeTgt_.back()->addItem("t" + juce::String(k), k + 1);
+        routeTgt_.back()->setSelectedId(r ? juce::jlimit(1, tN, r->targetIdx + 1) : 1,
+                                        juce::dontSendNotification);
+        styleCombo(routeTgt_.back());
+        routeTable_->rowsHost()->addAndMakeVisible(routeTgt_.back());
+
+        routeSlot_.push_back(new juce::TextEditor("ro" + juce::String(i)));
+        routeSlot_.back()->setText(r ? jstr(r->slot) : juce::String());
+        routeSlot_.back()->setJustification(juce::Justification::centredLeft);
+        styleInput(routeSlot_.back());
+        routeTable_->rowsHost()->addAndMakeVisible(routeSlot_.back());
+
+        routeParam_.push_back(new juce::TextEditor("rp" + juce::String(i)));
+        routeParam_.back()->setText(r ? jstr(r->param) : juce::String());
+        routeParam_.back()->setJustification(juce::Justification::centredLeft);
+        styleInput(routeParam_.back());
+        routeTable_->rowsHost()->addAndMakeVisible(routeParam_.back());
+
+        // Value mapping for this route (ARG / MIN / MAX / CURVE / K).
+        routeArg_.push_back(new juce::TextEditor("ra" + juce::String(i)));
+        routeArg_.back()->setText(r ? juce::String(r->arg) : juce::String("0"));
+        routeArg_.back()->setJustification(juce::Justification::centred);
+        styleInput(routeArg_.back());
+        routeTable_->rowsHost()->addAndMakeVisible(routeArg_.back());
+
+        routeMin_.push_back(new juce::TextEditor("rm" + juce::String(i)));
+        routeMin_.back()->setText(r ? fmtDbl(r->inMin) : juce::String("0"));
+        routeMin_.back()->setJustification(juce::Justification::centred);
+        styleInput(routeMin_.back());
+        routeTable_->rowsHost()->addAndMakeVisible(routeMin_.back());
+
+        routeMax_.push_back(new juce::TextEditor("rxm" + juce::String(i)));
+        routeMax_.back()->setText(r ? fmtDbl(r->inMax) : juce::String("1"));
+        routeMax_.back()->setJustification(juce::Justification::centred);
+        styleInput(routeMax_.back());
+        routeTable_->rowsHost()->addAndMakeVisible(routeMax_.back());
+
+        routeCurve_.push_back(new juce::ComboBox("rc" + juce::String(i)));
+        static const char* kCurveNames[] = {"identity", "exp", "invexp", "scurve"};
+        for (int c = 0; c < 4; ++c)
+            routeCurve_.back()->addItem(kCurveNames[c], c + 1);
+        routeCurve_.back()->setSelectedId(
+            r ? juce::jlimit(1, 4, idFromCurve(r->curve)) : 1,
+            juce::dontSendNotification);
+        styleCombo(routeCurve_.back());
+        routeTable_->rowsHost()->addAndMakeVisible(routeCurve_.back());
+
+        // K: scurve curvature (#7). 0 = straight S (smoothstep once),
+        // 1 = default, >1 = doubled smoothstep (sharper knee).
+        routeK_.push_back(new juce::TextEditor("rk" + juce::String(i)));
+        routeK_.back()->setText(r ? fmtDbl(r->curvature) : juce::String("1"));
+        routeK_.back()->setJustification(juce::Justification::centred);
+        styleInput(routeK_.back());
+        routeTable_->rowsHost()->addAndMakeVisible(routeK_.back());
+
+        // The button resolves its row at CLICK time (pointer lookup) instead
+        // of capturing the index: after any removal the rows below shift up
+        // and a captured index would be stale (wrong row deleted / no-op).
+        auto* txBtn = new HeddleButton("rx" + juce::String(i), "x",
+                                       HeddleButton::Kind::Neutral);
+        txBtn->onClick = [this, txBtn] {
+            if (locked_) return;
+            for (size_t rw = 0; rw < routeClr_.size(); ++rw)
+                if (routeClr_[rw] == txBtn) { removeRouteRow((int) rw); break; }
+        };
+        routeClr_.push_back(txBtn);
+        routeTable_->rowsHost()->addAndMakeVisible(txBtn);
+
+        routeTable_->pushRow(routeSrc_.back(), routeTgt_.back(), routeSlot_.back(),
+                             routeParam_.back(), routeArg_.back(), routeMin_.back(),
+                             routeMax_.back(), routeCurve_.back(), routeK_.back(),
+                             routeClr_.back());
         ++numRows_;
+    }
+    // Append a new (empty) route row. The table is a resizable std::vector —
+    // no cap, no pre-built spares (the core's std::vector<ProxyRoute> is
+    // unbounded, so the editor matches it).
+    void addRouteRow() {
+        buildRouteRow(nullptr);
         refreshLayout();
         status_->setText("route row added - press APPLY", juce::dontSendNotification);
     }
     // Remove a row: shift the rows below it up (each keeps its contents),
-    // shrink the table by one. The row's controls are reused, not deleted.
+    // then DESTROY the vacated last row's controls (a hidden-but-present
+    // control would linger on screen — the "ghost row" bug) and shrink the
+    // vectors. The # index labels are renumbered for the shifted rows.
     void removeRouteRow(int row) {
         if (row < 0 || row >= numRows_) return;
         for (int i = row; i + 1 < numRows_; ++i) {
             const ProxyRoute tmp = routeRowAt(i + 1);
             setRouteRow(i, &tmp);
         }
-        setRouteRow(numRows_ - 1, nullptr);
-        setRouteRowVisible(numRows_ - 1, false);  // hide the vacated row
+        delete routeSrc_.back();   routeSrc_.pop_back();
+        delete routeTgt_.back();   routeTgt_.pop_back();
+        delete routeSlot_.back();  routeSlot_.pop_back();
+        delete routeParam_.back(); routeParam_.pop_back();
+        delete routeArg_.back();   routeArg_.pop_back();
+        delete routeMin_.back();   routeMin_.pop_back();
+        delete routeMax_.back();   routeMax_.pop_back();
+        delete routeCurve_.back(); routeCurve_.pop_back();
+        delete routeK_.back();     routeK_.pop_back();
+        delete routeClr_.back();   routeClr_.pop_back();
+        routeTable_->popRow();
         --numRows_;
-        if (numRows_ < 1) numRows_ = 1;
+        routeTable_->renumberIndex();
         refreshLayout();
         status_->setText("route row removed - press APPLY", juce::dontSendNotification);
     }
@@ -1429,14 +1531,15 @@ private:
                 targetIp_.back()->setText(jstr(owner_.cfg_.targets[i].ip));
                 targetPort_.back()->setText(juce::String(owner_.cfg_.targets[i].port));
             }
-            const int tRow = i;
-            targetClr_.push_back(new HeddleButton("tx" + juce::String(tRow), "x",
-                                                  HeddleButton::Kind::Neutral));
-            targetClr_.back()->onClick = [this, tRow] {
+            auto* txBtn = new HeddleButton("tx" + juce::String(targetClr_.size()), "x",
+                                           HeddleButton::Kind::Neutral);
+            txBtn->onClick = [this, txBtn] {
                 if (locked_) return;
-                removeTargetRow(tRow);
+                for (size_t r = 0; r < targetClr_.size(); ++r)
+                    if (targetClr_[r] == txBtn) { removeTargetRow((int) r); break; }
             };
-            targetsHost_->addAndMakeVisible(targetClr_.back());
+            targetClr_.push_back(txBtn);
+            targetsHost_->addAndMakeVisible(txBtn);
         }
         addTargetBtn_ = new HeddleButton("atd", "+ ADD TARGET", HeddleButton::Kind::Neutral);
         addTargetBtn_->onClick = [this] {
@@ -1485,91 +1588,14 @@ private:
         // Target combo items: t0..t(n-1) for the live target rows. Rows are
         // built after buildTargets(), so targetEn_.size() is final here;
         // ADD/REMOVE TARGET keeps the combos in sync via rebuildTargetItems().
-        // Build ALL kMaxRoutes rows up front. ADD ROUTE reveals a pre-built
-        // spare (it never constructs one at runtime, which is what used to
-        // dereference a null control and crash the host); only the first
-        // numRows_ are shown, the rest are added-but-hidden.
-        for (int i = 0; i < kMaxRoutes; ++i) {
-            routeSrc_[i] = new juce::TextEditor("rs" + juce::String(i));
-            if (owner_.cfg_.routes.size() > i)
-                routeSrc_[i]->setText(jstr(owner_.cfg_.routes[i].srcAddr));
-            routeSrc_[i]->setJustification(juce::Justification::centredLeft);
-            styleInput(routeSrc_[i]);
-            routeTable_->rowsHost()->addAndMakeVisible(routeSrc_[i]);
-
-            routeTgt_[i] = new juce::ComboBox("rt" + juce::String(i));
-            const int tN = std::max(1, (int) targetEn_.size());
-            for (int k = 0; k < tN; ++k) routeTgt_[i]->addItem("t" + juce::String(k), k + 1);
-            const int sel = owner_.cfg_.routes.size() > i ? owner_.cfg_.routes[i].targetIdx + 1 : 1;
-            routeTgt_[i]->setSelectedId(juce::jlimit(1, tN, sel), juce::dontSendNotification);
-            styleCombo(routeTgt_[i]);
-            routeTable_->rowsHost()->addAndMakeVisible(routeTgt_[i]);
-
-            routeSlot_[i] = new juce::TextEditor("ro" + juce::String(i));
-            if (owner_.cfg_.routes.size() > i)
-                routeSlot_[i]->setText(jstr(owner_.cfg_.routes[i].slot));
-            routeSlot_[i]->setJustification(juce::Justification::centredLeft);
-            styleInput(routeSlot_[i]);
-            routeTable_->rowsHost()->addAndMakeVisible(routeSlot_[i]);
-
-            routeParam_[i] = new juce::TextEditor("rp" + juce::String(i));
-            if (owner_.cfg_.routes.size() > i)
-                routeParam_[i]->setText(jstr(owner_.cfg_.routes[i].param));
-            routeParam_[i]->setJustification(juce::Justification::centredLeft);
-            styleInput(routeParam_[i]);
-            routeTable_->rowsHost()->addAndMakeVisible(routeParam_[i]);
-
-            // Value mapping for this route (ARG / MIN / MAX / CURVE / K).
-            const ProxyRoute* rt = owner_.cfg_.routes.size() > i ? &owner_.cfg_.routes[i] : nullptr;
-            routeArg_[i] = new juce::TextEditor("ra" + juce::String(i));
-            routeArg_[i]->setText(rt ? juce::String(rt->arg) : juce::String("0"));
-            routeArg_[i]->setJustification(juce::Justification::centred);
-            styleInput(routeArg_[i]);
-            routeTable_->rowsHost()->addAndMakeVisible(routeArg_[i]);
-
-            routeMin_[i] = new juce::TextEditor("rm" + juce::String(i));
-            routeMin_[i]->setText(rt ? fmtDbl(rt->inMin) : juce::String("0"));
-            routeMin_[i]->setJustification(juce::Justification::centred);
-            styleInput(routeMin_[i]);
-            routeTable_->rowsHost()->addAndMakeVisible(routeMin_[i]);
-
-            routeMax_[i] = new juce::TextEditor("rxm" + juce::String(i));
-            routeMax_[i]->setText(rt ? fmtDbl(rt->inMax) : juce::String("1"));
-            routeMax_[i]->setJustification(juce::Justification::centred);
-            styleInput(routeMax_[i]);
-            routeTable_->rowsHost()->addAndMakeVisible(routeMax_[i]);
-
-            routeCurve_[i] = new juce::ComboBox("rc" + juce::String(i));
-            static const char* kCurveNames[] = {"identity", "exp", "invexp", "scurve"};
-            for (int c = 0; c < 4; ++c) routeCurve_[i]->addItem(kCurveNames[c], c + 1);
-            const int cSel = rt ? idFromCurve(rt->curve) : 1;
-            routeCurve_[i]->setSelectedId(juce::jlimit(1, 4, cSel), juce::dontSendNotification);
-            styleCombo(routeCurve_[i]);
-            routeTable_->rowsHost()->addAndMakeVisible(routeCurve_[i]);
-
-            // K: scurve curvature (#7). 0 = straight S (smoothstep once),
-            // 1 = default, >1 = doubled smoothstep (sharper knee).
-            routeK_[i] = new juce::TextEditor("rk" + juce::String(i));
-            routeK_[i]->setText(rt ? fmtDbl(rt->curvature) : juce::String("1"));
-            routeK_[i]->setJustification(juce::Justification::centred);
-            styleInput(routeK_[i]);
-            routeTable_->rowsHost()->addAndMakeVisible(routeK_[i]);
-
-            const int row = i;
-            routeClr_[i] = new HeddleButton("rx" + juce::String(i), "x",
-                                            HeddleButton::Kind::Neutral);
-            routeClr_[i]->onClick = [this, row] {
-                if (locked_) return;
-                removeRouteRow(row);
-            };
-
-            routeTable_->rowsHost()->addAndMakeVisible(routeClr_[i]);
-            routeTable_->attachRow(i, routeSrc_[i], routeTgt_[i], routeSlot_[i],
-                                   routeParam_[i], routeArg_[i], routeMin_[i],
-                                   routeMax_[i], routeCurve_[i], routeK_[i],
-                                   routeClr_[i]);
-            setRouteRowVisible(i, i < numRows_);  // hide the spares
-        }
+        // The table is a DYNAMIC std::vector (no cap — the core's
+        // std::vector<ProxyRoute> is unbounded): create exactly numRows_
+        // rows, seeded from the stored routes. ADD ROUTE appends a row and
+        // each row's "x" destroys it — no pre-built spares, so no null
+        // control can ever be dereferenced (the old crash).
+        for (int i = 0; i < numRows_; ++i)
+            buildRouteRow(owner_.cfg_.routes.size() > i
+                              ? &owner_.cfg_.routes[i] : nullptr);
         routeTable_->setActiveRows(numRows_);
         routeTable_->setDropCallback(
             [this](int row, const juce::var& d) { dropOnRoute(row, d); });
@@ -1748,18 +1774,22 @@ private:
     juce::Label* rtColMM_ = nullptr;
     juce::Label* rtColCv_ = nullptr;
     juce::Label* rtColK_ = nullptr;
-    juce::TextEditor* routeSrc_[kMaxRoutes] = {};
-    juce::ComboBox* routeTgt_[kMaxRoutes] = {};
-    juce::TextEditor* routeSlot_[kMaxRoutes] = {};
-    juce::TextEditor* routeParam_[kMaxRoutes] = {};
-    juce::TextEditor* routeArg_[kMaxRoutes] = {};
-    juce::TextEditor* routeMin_[kMaxRoutes] = {};
-    juce::TextEditor* routeMax_[kMaxRoutes] = {};
-    juce::ComboBox* routeCurve_[kMaxRoutes] = {};
-    juce::TextEditor* routeK_[kMaxRoutes] = {};
-    juce::Button* routeClr_[kMaxRoutes] = {};
+    // Dynamic route rows (unbounded std::vectors — matches the core's
+    // std::vector<ProxyRoute>, which has no cap). The row controls are
+    // created/destroyed by ADD ROUTE / row "x"; the RouteTable registers
+    // them (and owns the # index labels) via pushRow()/popRow().
+    std::vector<juce::TextEditor*> routeSrc_;
+    std::vector<juce::ComboBox*> routeTgt_;
+    std::vector<juce::TextEditor*> routeSlot_;
+    std::vector<juce::TextEditor*> routeParam_;
+    std::vector<juce::TextEditor*> routeArg_;
+    std::vector<juce::TextEditor*> routeMin_;
+    std::vector<juce::TextEditor*> routeMax_;
+    std::vector<juce::ComboBox*> routeCurve_;
+    std::vector<juce::TextEditor*> routeK_;
+    std::vector<juce::Button*> routeClr_;
     juce::Button* addRouteBtn_ = nullptr;
-    int numRows_ = 0;  // ACTIVE route rows (kDefaultRoutes..kMaxRoutes)
+    int numRows_ = 0;  // ACTIVE route rows (== routeSrc_.size(); unbounded)
 
     juce::Button* discBtn_ = nullptr;
     juce::Label* discHdr_ = nullptr;
@@ -1777,7 +1807,8 @@ private:
     std::string lastSnap_;
     // Every field value concatenated with 0x1F separators. Raw UTF-8 is
     // appended straight to a std::string (no juce::String round-trip — that
-    // constructor treats bytes as UTF-16). ~KB at 64 routes, cheap at 4 Hz.
+    // constructor treats bytes as UTF-16). A few KB at typical route counts,
+    // cheap at 4 Hz.
     std::string fieldSnapshot() {
         std::string s;
         s.reserve(4096);
