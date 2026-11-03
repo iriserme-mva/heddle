@@ -80,8 +80,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: osc-perf-json-core-${{ matrix.os }}
-          path: perf_out/*.json
-          if-no-files-found: ignore
+          path: perf_out/**/*.json
+          if-no-files-found: warn
 
       - name: Upload core perf report
         if: always()
@@ -398,8 +398,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: osc-perf-json-host-${{ matrix.os }}
-          path: perf_out/*.json
-          if-no-files-found: ignore
+          path: perf_out/**/*.json
+          if-no-files-found: warn
 
       - name: Upload host perf report
         if: always()
@@ -439,9 +439,9 @@ jobs:
         run: |
           set -e
           mkdir -p perf
-          # perf_out/<artifact-name>/<platform>-<layer>-<stamp>.json -> perf/<sha7>/
-          for f in perf_out/*/*.json; do
-            [ -e "$f" ] || continue
+          # perf_out/<artifact-name>/<sha7>/<platform>-<layer>-<stamp>.json
+          # -> perf/<sha7>/ (find: upload-artifact preserves the subdirs)
+          find perf_out -name '*.json' -type f | while read -r f; do
             sha=$(python -c "import json,sys;print(json.load(open(sys.argv[1]))['commit'][:7])" "$f")
             mkdir -p "perf/$sha"
             cp -f "$f" "perf/$sha/$(basename "$f")"
