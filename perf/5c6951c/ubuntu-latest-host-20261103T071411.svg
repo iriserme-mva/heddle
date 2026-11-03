@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="560" viewBox="0 0 1080 560"><rect width="1080" height="560" fill="#0d1117"/><text x="24" y="34" fill="#e6edf3" font-family="Consolas,monospace" font-size="20" font-weight="bold">Heddle OSC perf — host</text><text x="24" y="56" fill="#8b949e" font-family="Consolas,monospace" font-size="13">commit 5c6951c  |  ubuntu-latest  |  20261103T071411Z  |  schema 1</text>
+<rect x="70" y="98.0" width="656.0" height="45.0" fill="#3fb950" rx="2"/>
+<text x="734.0" y="148.0" fill="#e6edf3" font-family="Consolas,monospace" font-size="14">2259 us</text>
+<text x="70" y="174.0" fill="#8b949e" font-family="Consolas,monospace" font-size="12">RTT @50/s (med)</text>
+<rect x="70" y="188.0" width="760.0" height="45.0" fill="#3fb950" rx="2"/>
+<text x="838.0" y="238.0" fill="#e6edf3" font-family="Consolas,monospace" font-size="14">2617 us</text>
+<text x="70" y="264.0" fill="#8b949e" font-family="Consolas,monospace" font-size="12">RTT @500/s (med)</text>
+<rect x="70" y="278.0" width="755.8" height="45.0" fill="#3fb950" rx="2"/>
+<text x="833.8" y="328.0" fill="#e6edf3" font-family="Consolas,monospace" font-size="14">2602.5 us</text>
+<text x="70" y="354.0" fill="#8b949e" font-family="Consolas,monospace" font-size="12">RTT @5000/s (med)</text>
+<rect x="70" y="368.0" width="13.6" height="45.0" fill="#3fb950" rx="2"/>
+<text x="91.6" y="418.0" fill="#e6edf3" font-family="Consolas,monospace" font-size="14">47 blk/s</text>
+<text x="70" y="444.0" fill="#8b949e" font-family="Consolas,monospace" font-size="12">baseline blocks/s</text>
+<text x="530" y="100" fill="#8b949e" font-family="Consolas,monospace" font-size="13">all metrics (schema 1)</text>
+<text x="530" y="122" fill="#8b949e" font-family="Consolas,monospace" font-size="12">max_reliable_rate_sets_per_s</text>
+<text x="1050" y="122" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">5000</text>
+<text x="530" y="138" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.1000.acks</text>
+<text x="1050" y="138" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">1999</text>
+<text x="530" y="154" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.1000.audio_deficit_pct</text>
+<text x="1050" y="154" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">-0</text>
+<text x="530" y="170" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.1000.blocks_per_s</text>
+<text x="1050" y="170" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">47</text>
+<text x="530" y="186" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.1000.loss_pct</text>
+<text x="1050" y="186" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">0.05</text>
+<text x="530" y="202" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.1000.peak_input_backlog_frames</text>
+<text x="1050" y="202" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">16384</text>
+<text x="530" y="218" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.1000.rtt_median_us</text>
+<text x="1050" y="218" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">2660</text>
+<text x="530" y="234" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.1000.rtt_p99_us</text>
+<text x="1050" y="234" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">6359.4</text>
+<text x="530" y="250" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.1000.sent</text>
+<text x="1050" y="250" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">2000</text>
+<text x="530" y="266" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.200.acks</text>
+<text x="1050" y="266" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">400</text>
+<text x="530" y="282" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.200.audio_deficit_pct</text>
+<text x="1050" y="282" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">-0</text>
+<text x="530" y="298" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.200.blocks_per_s</text>
+<text x="1050" y="298" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">47</text>
+<text x="530" y="314" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.200.loss_pct</text>
+<text x="1050" y="314" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">0</text>
+<text x="530" y="330" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.200.peak_input_backlog_frames</text>
+<text x="1050" y="330" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">16384</text>
+<text x="530" y="346" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.200.rtt_median_us</text>
+<text x="1050" y="346" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">2833.7</text>
+<text x="530" y="362" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.200.rtt_p99_us</text>
+<text x="1050" y="362" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">6378.8</text>
+<text x="530" y="378" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.200.sent</text>
+<text x="1050" y="378" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">400</text>
+<text x="530" y="394" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.2000.acks</text>
+<text x="1050" y="394" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">3998</text>
+<text x="530" y="410" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.2000.audio_deficit_pct</text>
+<text x="1050" y="410" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">-0</text>
+<text x="530" y="426" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.2000.blocks_per_s</text>
+<text x="1050" y="426" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">47</text>
+<text x="530" y="442" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.2000.loss_pct</text>
+<text x="1050" y="442" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">0.05</text>
+<text x="530" y="458" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.2000.peak_input_backlog_frames</text>
+<text x="1050" y="458" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">16384</text>
+<text x="530" y="474" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.2000.rtt_median_us</text>
+<text x="1050" y="474" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">2627.6</text>
+<text x="530" y="490" fill="#8b949e" font-family="Consolas,monospace" font-size="12">rate.2000.rtt_p99_us</text>
+<text x="1050" y="490" fill="#e6edf3" font-family="Consolas,monospace" font-size="12" text-anchor="end">5876.4</text>
+</svg>
