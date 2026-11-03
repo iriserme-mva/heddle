@@ -448,6 +448,15 @@ jobs:
           done
           python tools/perf_infographic.py --repo . --only "${GITHUB_SHA:0:7}"
 
+          # Per-commit infographic: reads this commit's JSONs (just laid above)
+          # + the prior commit dir (auto-detected for delta context — git history
+          # when the checkout has it, else run timestamps, which is correct for a
+          # depth-1 CI checkout) and writes perf/<sha7>/infographic.svg alongside
+          # the JSONs. Stdlib-only (runs on any CI python). Non-fatal: a hiccup
+          # here must not block committing the JSONs + trend SVGs above.
+          python tools/perf_commit_infographic.py --repo . --commit "${GITHUB_SHA:0:7}" \
+            || echo "::warning::per-commit infographic generation failed (JSONs + trends still committed)"
+
       - name: Commit perf JSON + infographics
         run: |
           set -e
