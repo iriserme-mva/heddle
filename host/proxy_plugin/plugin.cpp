@@ -111,18 +111,38 @@ public:
 
     void ensureStarted() {
         if (engine_.running()) return;
+        // Back off after a failed start: a held listen port (e.g. a second
+        // Heddle instance) otherwise costs a full stop()+re-bind of the
+        // socket set every 5 ms tick — that is the idle-CPU leak, and it
+        // also hammers WSAStartup/socket syscalls for no reason. Retry
+        // exponentially: 1 s, 2 s, 4 s, ... capped at 30 s. An explicit
+        // commitConfig (APPLY button) resets the backoff and retries now.
+        const int64_t now = juce::Time::getMillisecondCounter();
+        if (startFailed_ && now - lastStartAttemptMs_ < startBackoffMs_)
+            return;
+        lastStartAttemptMs_ = now;
         std::string err;
-        if (!engine_.start(cfg_, &err))
+        if (!engine_.start(cfg_, &err)) {
+            startFailed_ = true;
             statusMsg_ = "start failed: " + err;
-        else
+            startBackoffMs_ = juce::jmin<int64_t>(startBackoffMs_ * 2, 30000);
+        } else {
+            startFailed_ = false;
+            startBackoffMs_ = 1000;
             statusMsg_ = "running";
+        }
     }
 
     // (Re)bind with the current config. Called by the editor on APPLY / mode
     // change / discovered-route insertion.
     void commitConfig(const juce::String& label) {
+        // Explicit user intent: retry immediately even mid-backoff.
+        startFailed_ = false;
+        startBackoffMs_ = 1000;
+        lastStartAttemptMs_ = juce::Time::getMillisecondCounter();
         std::string err;
         if (!engine_.start(cfg_, &err)) {
+            startFailed_ = true;
             statusMsg_ = "start failed: " + err;
         } else {
             statusMsg_ = label + " (" + cfg_.mode + ")";
@@ -132,6 +152,11 @@ public:
     ProxyConfig cfg_;
     juce::String statusMsg_ = "not started";
     ProxyEngine engine_;
+
+    // ensureStarted() backoff state (see ensureStarted for the contract).
+    bool startFailed_ = false;
+    int64_t lastStartAttemptMs_ = 0;
+    int64_t startBackoffMs_ = 1000;
 
     // ------------------------------------------------------------------
     // State: the routing table as JSON (round-trips through proxy::dump).
