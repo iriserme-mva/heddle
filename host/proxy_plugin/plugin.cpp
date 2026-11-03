@@ -6,8 +6,11 @@
 // The editor exposes the full routing table:
 //   * 3-state mode button: OFF / ONLY-CONTROL / FULL
 //   * listen port (the port the surface / TouchOSC sends to)
-//   * up to 5 targets (ip / port / enabled)
-//   * up to 8 routes (surface addr -> target idx / slot / param), each with
+//   * any number of targets (id / ip / port / enabled; the panel shows at
+//     most 4 rows with an ID label on the left, then scrolls internally)
+//   * up to 64 routes (surface addr -> target idx / slot / param; the panel
+//     shows at most 12 rows with a continuous # index on the left, then
+//     scrolls), each with
 //     a value mapping: arg (which float of the surface message is the value),
 //     in_min / in_max (rescale to 0..1) and curve (identity/exp/invexp/scurve)
 //   * DISCOVER: query a target via the Heddle OSC protocol and list its
@@ -255,10 +258,10 @@ public:
         const juce::String path = juce::String("/chain/") + jstr(e.p.slot) + "/" +
                                   jstr(e.p.param);
         g.setColour(text);
-        g.setFont(juce::FontOptions("Segoe UI", 12.0f, juce::Font::plain));
+        g.setFont(juce::FontOptions("Segoe UI", 14.4f, juce::Font::plain));
         g.drawText(path, 16, 1, 2000, height, juce::Justification::left);
         g.setColour(dim);
-        g.setFont(juce::FontOptions("Segoe UI", 11.0f, juce::Font::plain));
+        g.setFont(juce::FontOptions("Segoe UI", 13.2f, juce::Font::plain));
         g.drawText("t" + juce::String(e.targetIdx) + "  #" + juce::String(e.p.paramId)
                        + "   (drag onto a route row)",
                    16, 1, 2000, height, juce::Justification::right);
@@ -310,10 +313,10 @@ public:
         g.setColour(accent);
         g.fillRect(6, (height - 8) / 2, 3, 8);
         g.setColour(text);
-        g.setFont(juce::FontOptions("Segoe UI", 12.0f, juce::Font::plain));
+        g.setFont(juce::FontOptions("Segoe UI", 14.4f, juce::Font::plain));
         g.drawText(jstr(e.addr), 16, 1, 2000, height, juce::Justification::left);
         g.setColour(dim);
-        g.setFont(juce::FontOptions("Segoe UI", 11.0f, juce::Font::plain));
+        g.setFont(juce::FontOptions("Segoe UI", 13.2f, juce::Font::plain));
         g.drawText((e.numFloats > 1 ? juce::String(e.numFloats) + " floats" : "1 float")
                        + "   (drag onto a route row)",
                    16, 1, 2000, height, juce::Justification::right);
@@ -391,7 +394,7 @@ public:
         g.setColour(fill);
         g.fillRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), 5.0f);
         g.setColour(label);
-        g.setFont(hf(12.0f, juce::Font::bold));
+        g.setFont(hf(14.4f, juce::Font::bold));  // +20% (was 12)
         g.drawText(getButtonText(), getLocalBounds().reduced(4, 0),
                    juce::Justification::centred);
     }
@@ -422,13 +425,22 @@ struct HeddleLayout {
     // Content coordinates (the scrollable area starts below the fixed band):
     static constexpr int t0 = 16;        // TARGETS header top
     static constexpr int tRowH = 30;
-    static int r0(int tRows) { return t0 + 36 + tRows * tRowH + 36 + 10; }
+    // Panel caps (the user's spec): the targets panel shows at most 4 rows
+    // and the routes table at most 12; beyond that each scrolls internally.
+    static constexpr int kTgtPanelMax = 4;
+    static constexpr int kRoutePanelMax = 12;
+    static int targetsVisibleH(int tRows) {
+        return juce::jmin(tRows, kTgtPanelMax) * tRowH + 4;
+    }
+    static int r0(int tRows) { return t0 + 36 + targetsVisibleH(tRows) + 46; }
     static constexpr int rHeaderH = 40;  // route-table header zone (hdr + cols)
     static constexpr int rRowH = 36;
-    static int tableH(int rRows) { return rHeaderH + rRows * rRowH + 6; }
+    static int tableH(int rRows) {
+        return rHeaderH + juce::jmin(rRows, kRoutePanelMax) * rRowH + 6;
+    }
     static int addRouteY(int tRows, int rRows) { return r0(tRows) + tableH(rRows); }
     static int d0(int tRows, int rRows) { return addRouteY(tRows, rRows) + 36 + 12; }
-    static int contentH(int tRows, int rRows) { return d0(tRows, rRows) + 140 + 16; }
+    static int contentH(int tRows, int rRows) { return d0(tRows, rRows) + 250 + 16; }
     static constexpr int winCapH = 760;  // window cap; the Viewport scrolls beyond
 };
 
@@ -457,7 +469,7 @@ public:
         g.fillRect(16, HeddleLayout::t0 - 10, getWidth() - 32, 1);
         g.fillRect(16, r0 - 12, getWidth() - 32, 1);
         g.fillRect(16, d0 - 12, getWidth() - 32, 1);
-        g.fillRect(668, d0 + 8, 1, 88);  // discover block | learn panel
+        g.fillRect(668, d0 + 8, 1, 180);  // discover block | learn panel
     }
 
 private:
@@ -491,9 +503,35 @@ class RouteTable : public juce::Component,
 public:
     using DropCb = std::function<void(int /*row*/, const juce::var& /*payload*/)>;
 
-    RouteTable() { setName("rt"); }
+    RouteTable() {
+        setName("rt");
+        // The rows live in an INNER viewport: the table shows at most
+        // kRoutePanelMax rows and scrolls the overflow (the user's spec).
+        // The column header labels stay fixed on this component above it.
+        rowsHost_ = new juce::Component("rth");
+        rowsVp_ = new juce::Viewport("rvp");
+        rowsVp_->getVerticalScrollBar().setColour(juce::ScrollBar::thumbColourId,
+                                                  HeddlePalette::panelFocus());
+        rowsVp_->getVerticalScrollBar().setColour(juce::ScrollBar::trackColourId,
+                                                  HeddlePalette::baseTop());
+        rowsVp_->setViewedComponent(rowsHost_, false);
+        addAndMakeVisible(rowsVp_);
+        // Continuous route index labels (#1, #2, ...): row i always shows
+        // #(i+1) (rows are numbered from the top), so the texts are fixed at
+        // build time and only the positions travel with the scroll.
+        for (int i = 0; i < kMaxRoutes; ++i) {
+            idx_[i] = new juce::Label("ri" + juce::String(i), "#" + juce::String(i + 1));
+            idx_[i]->setFont(hf(10.8f, juce::Font::bold));
+            idx_[i]->setColour(juce::Label::textColourId, HeddlePalette::textDim());
+            idx_[i]->setJustificationType(juce::Justification::centred);
+            rowsHost_->addAndMakeVisible(idx_[i]);
+        }
+    }
 
     void setDropCallback(DropCb cb) { cb_ = std::move(cb); }
+    // The row controls (and the # index labels) live here, inside the inner
+    // viewport — the editor adds its row editors to this component.
+    juce::Component* rowsHost() const { return rowsHost_; }
     void setLocked(bool l) {
         locked_ = l;
         if (l) {
@@ -526,54 +564,71 @@ public:
         layout();
     }
     // Table-local column geometry — the single source for both layout() and
-    // the drop-hover highlight. 10 columns: 9 data + the "x" remove button.
-    // Total span 12..798 (content is 860 wide).
+    // the drop-hover highlight. 11 columns: # index + 9 data + the "x"
+    // remove button. Total span 12..768 (content is 860 wide).
     struct Col { int x, w; };
     static const Col& col(int idx) {
-        static const Col cols[10] = {
-            {12, 148},    // SURFACE ADDR
-            {166, 52},    // TGT
-            {224, 112},   // SLOT
-            {342, 138},   // PARAM
+        static const Col cols[11] = {
+            {12, 36},     // # index
+            {54, 150},    // SURFACE ADDR
+            {204, 50},    // TGT
+            {254, 104},   // SLOT
+            {358, 128},   // PARAM
             {486, 38},    // ARG
-            {530, 34},    // MIN
-            {570, 44},    // MAX
-            {620, 78},    // CURVE
-            {704, 36},    // K (scurve curvature)
-            {746, 40},    // x
+            {524, 34},    // MIN
+            {558, 44},    // MAX
+            {602, 84},    // CURVE
+            {686, 38},    // K (scurve curvature)
+            {724, 44},    // x
         };
         return cols[idx];
     }
     void layout() {
+        // The header labels are FIXED on the table (they do not scroll).
         if (hdr_ != nullptr) hdr_->setBounds(12, 3, 700, 16);
         if (cSrc_ != nullptr) {
-            cSrc_->setBounds(col(0).x, 24, col(0).w, 14);
-            cTgt_->setBounds(col(1).x, 24, col(1).w, 14);
-            cSlot_->setBounds(col(2).x, 24, col(2).w, 14);
-            cParam_->setBounds(col(3).x, 24, col(3).w, 14);
-            cArg_->setBounds(col(4).x, 24, col(4).w, 14);
-            cMin_->setBounds(col(5).x, 24, col(5).w, 14);
+            cSrc_->setBounds(col(1).x, 24, col(1).w, 14);
+            cTgt_->setBounds(col(2).x, 24, col(2).w, 14);
+            cSlot_->setBounds(col(3).x, 24, col(3).w, 14);
+            cParam_->setBounds(col(4).x, 24, col(4).w, 14);
+            cArg_->setBounds(col(5).x, 24, col(5).w, 14);
+            cMin_->setBounds(col(6).x, 24, col(6).w, 14);
             if (cMax_ == cMin_)
                 // One combined "MIN  MAX" header label: span both columns.
-                cMin_->setBounds(col(5).x, 24, col(6).x + col(6).w - col(5).x, 14);
+                cMin_->setBounds(col(6).x, 24, col(7).x + col(7).w - col(6).x, 14);
             else
-                cMax_->setBounds(col(6).x, 24, col(6).w, 14);
-            cCurve_->setBounds(col(7).x, 24, col(7).w, 14);
-            cK_->setBounds(col(8).x, 24, col(8).w, 14);
+                cMax_->setBounds(col(7).x, 24, col(7).w, 14);
+            cCurve_->setBounds(col(8).x, 24, col(8).w, 14);
+            cK_->setBounds(col(9).x, 24, col(9).w, 14);
         }
+        // Inner viewport: at most kRoutePanelMax rows visible, then scroll.
+        if (rowsVp_ != nullptr) {
+            const int vis = juce::jmin(activeRows_, HeddleLayout::kRoutePanelMax);
+            rowsVp_->setBounds(0, HeddleLayout::rHeaderH, getWidth(),
+                               vis * HeddleLayout::rRowH + 4);
+            rowsHost_->setSize(getWidth(), activeRows_ * HeddleLayout::rRowH + 4);
+        }
+        // Row controls are HOST-local (the viewport applies its scroll
+        // offset itself); row i sits at y = i * rRowH inside the host.
         for (int i = 0; i < activeRows_; ++i) {
-            const int y = HeddleLayout::rHeaderH + i * HeddleLayout::rRowH;
-            src_[i]->setBounds(col(0).x, y, col(0).w, 24);
-            tgt_[i]->setBounds(col(1).x, y, col(1).w, 26);
-            slot_[i]->setBounds(col(2).x, y, col(2).w, 24);
-            param_[i]->setBounds(col(3).x, y, col(3).w, 24);
-            arg_[i]->setBounds(col(4).x, y, col(4).w - 2, 24);
-            min_[i]->setBounds(col(5).x, y, col(5).w - 2, 24);
-            max_[i]->setBounds(col(6).x, y, col(6).w - 2, 24);
-            curve_[i]->setBounds(col(7).x, y, col(7).w, 26);
-            kEd_[i]->setBounds(col(8).x, y, col(8).w - 2, 24);
-            clr_[i]->setBounds(col(9).x, y + 2, col(9).w, 26);
+            const int y = i * HeddleLayout::rRowH;
+            if (idx_[i] != nullptr) {
+                idx_[i]->setVisible(true);
+                idx_[i]->setBounds(col(0).x, y + 5, col(0).w, 24);
+            }
+            src_[i]->setBounds(col(1).x, y, col(1).w, 24);
+            tgt_[i]->setBounds(col(2).x, y, col(2).w, 26);
+            slot_[i]->setBounds(col(3).x, y, col(3).w, 24);
+            param_[i]->setBounds(col(4).x, y, col(4).w, 24);
+            arg_[i]->setBounds(col(5).x, y, col(5).w - 2, 24);
+            min_[i]->setBounds(col(6).x, y, col(6).w - 2, 24);
+            max_[i]->setBounds(col(7).x, y, col(7).w - 2, 24);
+            curve_[i]->setBounds(col(8).x, y, col(8).w, 26);
+            kEd_[i]->setBounds(col(9).x, y, col(9).w - 2, 24);
+            clr_[i]->setBounds(col(10).x, y + 2, col(10).w, 26);
         }
+        for (int i = activeRows_; i < kMaxRoutes; ++i)
+            if (idx_[i] != nullptr) idx_[i]->setVisible(false);
     }
 
     // ---- DragAndDropTarget ------------------------------------------------
@@ -607,14 +662,15 @@ public:
         // Subtle panel background behind the rows + row dividers.
         g.setColour(juce::Colour(0xff1d232c));
         g.fillRect(getLocalBounds());
+        const int vpTop = rowsVp_ != nullptr ? rowsVp_->getViewPositionY() : 0;
         g.setColour(HeddlePalette::divider());
         for (int i = 0; i <= activeRows_; ++i) {
-            const int y = HeddleLayout::rHeaderH + i * HeddleLayout::rRowH;
-            if (y > getHeight()) break;
+            const int y = HeddleLayout::rHeaderH + i * HeddleLayout::rRowH - vpTop;
+            if (y < HeddleLayout::rHeaderH || y > getHeight()) continue;
             g.fillRect(2, y - 1, getWidth() - 4, 1);
         }
         if (hoverRow_ < 0 || hoverRow_ >= activeRows_) return;
-        const int y = HeddleLayout::rHeaderH + hoverRow_ * HeddleLayout::rRowH;
+        const int y = HeddleLayout::rHeaderH + hoverRow_ * HeddleLayout::rRowH - vpTop;
         const juce::Colour accent = HeddlePalette::accent();
         g.setColour(accent.withAlpha(0.14f));
         g.fillRect(0, y, getWidth(), HeddleLayout::rRowH);
@@ -629,9 +685,13 @@ public:
     }
 
 private:
-    static int rowFromY(int y) {
-        if (y < HeddleLayout::rHeaderH) return -1;
-        return (y - HeddleLayout::rHeaderH) / HeddleLayout::rRowH;
+    int rowFromY(int y) const {
+        // The rows scroll inside the inner viewport: map table-local y to a
+        // row index past the viewport's vertical offset.
+        const int y0 = HeddleLayout::rHeaderH
+                       + (rowsVp_ != nullptr ? rowsVp_->getViewPositionY() : 0);
+        if (y < y0) return -1;
+        return (y - y0) / HeddleLayout::rRowH;
     }
     void updateHover(const juce::Point<int>& p) {
         hoverRow_ = rowFromY(p.y);
@@ -641,7 +701,7 @@ private:
             return;
         }
         hoverCol_ = -1;
-        for (int i = 0; i < 10; ++i) {
+        for (int i = 0; i < 11; ++i) {
             const Col& c = col(i);
             if (p.x >= c.x - 2 && p.x <= c.x + c.w + 2) {
                 hoverCol_ = i;
@@ -676,6 +736,9 @@ private:
     juce::ComboBox* curve_[kMaxRoutes] = {};
     juce::TextEditor* kEd_[kMaxRoutes] = {};
     juce::Button* clr_[kMaxRoutes] = {};
+    juce::Component* rowsHost_ = nullptr;
+    juce::Viewport* rowsVp_ = nullptr;
+    juce::Label* idx_[kMaxRoutes] = {};
 };
 
 // ===========================================================================
@@ -921,21 +984,28 @@ public:
         viewport_->setBounds(0, hh, getWidth(), getHeight() - hh);
         content_->setSize(HeddleLayout::W, HeddleLayout::contentH(numTargets_, numRows_));
 
-        // Targets block (content-local coordinates; t0 sits just under the band)
+        // Targets block: the rows live inside the inner viewport (host-local
+        // coordinates; the viewport applies the scroll offset itself). At
+        // most kTgtPanelMax rows are visible, then the panel scrolls.
         const int t0 = HeddleLayout::t0;
         const int tRowH = HeddleLayout::tRowH;
         targetsHdr_->setBounds(16, t0, 360, 16);
-        tgtColEn_->setBounds(16, t0 + 18, 60, 14);
-        tgtColIp_->setBounds(86, t0 + 18, 150, 14);
-        tgtColPt_->setBounds(242, t0 + 18, 64, 14);
+        tgtColId_->setBounds(16, t0 + 18, 56, 14);
+        tgtColEn_->setBounds(76, t0 + 18, 60, 14);
+        tgtColIp_->setBounds(136, t0 + 18, 150, 14);
+        tgtColPt_->setBounds(292, t0 + 18, 64, 14);
+        const int tvTop = t0 + 36;
+        targetsVp_->setBounds(8, tvTop, 416, HeddleLayout::targetsVisibleH(numTargets_));
+        targetsHost_->setSize(416, numTargets_ * tRowH + 4);
         for (size_t i = 0; i < targetEn_.size(); ++i) {
-            const int y = t0 + 36 + (int) i * tRowH;
-            targetEn_[i]->setBounds(28, y + 4, 40, 20);
-            targetIp_[i]->setBounds(86, y, 150, 24);
-            targetPort_[i]->setBounds(242, y, 64, 24);
-            targetClr_[i]->setBounds(316, y + 2, 48, 26);
+            const int y = (int) i * tRowH;
+            targetId_[i]->setBounds(16, y + 5, 56, 24);
+            targetEn_[i]->setBounds(76, y + 4, 44, 20);
+            targetIp_[i]->setBounds(136, y, 150, 24);
+            targetPort_[i]->setBounds(292, y, 64, 24);
+            targetClr_[i]->setBounds(364, y + 2, 44, 26);
         }
-        addTargetBtn_->setBounds(16, t0 + 36 + numTargets_ * tRowH, 110, 28);
+        addTargetBtn_->setBounds(16, tvTop + HeddleLayout::targetsVisibleH(numTargets_) + 8, 110, 28);
 
         // Routes table: one component at r0, height = header + rows (+ pad).
         // The table lays out its own columns/rows (layout() in RouteTable).
@@ -950,12 +1020,12 @@ public:
         // Discover block + learn panel (both under the routes table).
         const int d0 = HeddleLayout::d0(numTargets_, numRows_);
         learnHdr_->setBounds(688, d0 + 8, 160, 16);
-        learnList_->setBounds(688, d0 + 28, 156, 70);
+        learnList_->setBounds(688, d0 + 28, 156, 180);   // 3x taller (was 70)
         discHdr_->setBounds(16, d0 + 8, 400, 16);
         discBtn_->setBounds(16, d0 + 32, 120, 30);
         discTgt_->setBounds(152, d0 + 32, 104, 28);
-        discList_->setBounds(16, d0 + 70, 300, 70);
-        discLbl_->setBounds(332, d0 + 70, 320, 70);
+        discList_->setBounds(16, d0 + 70, 300, 180);     // 3x taller (was 70)
+        discLbl_->setBounds(332, d0 + 70, 320, 180);
     }
 
 private:
@@ -1033,7 +1103,7 @@ private:
     // Fonts are deliberately bigger and higher-contrast than 0.1.8: 9pt faint
     // labels on #171b21 were unreadable, and the list text was the same.
     static void styleFaintLabel(juce::Label* l) {
-        l->setFont(hf(10.5f, juce::Font::bold));
+        l->setFont(hf(12.6f, juce::Font::bold));  // +20% (was 10.5)
         l->setColour(juce::Label::textColourId, HeddlePalette::textDim());
     }
     static void styleInput(juce::TextEditor* e) {
@@ -1043,13 +1113,16 @@ private:
         // pre-existing text at the old size while newly typed characters use
         // the new one (the "little 0" bug). applyFontToAllText() re-styles
         // every section with the current font.
-        e->setFont(hf(13.5f));
-        e->applyFontToAllText(hf(13.5f));
+        e->setFont(hf(16.2f));   // +20% (was 13.5)
+        e->applyFontToAllText(hf(16.2f));
         e->setColour(juce::TextEditor::textColourId, HeddlePalette::text());
         e->setColour(juce::TextEditor::backgroundColourId, HeddlePalette::panel());
         e->setColour(juce::TextEditor::highlightColourId, HeddlePalette::panelFocus());
     }
     static void styleCombo(juce::ComboBox* c) {
+        // The combo font comes from the LookAndFeel (V4 default):
+        // min(16, height*0.85) = ~15.6pt for our 26-28px combos, already the
+        // +20% size — this fork's ComboBox has no setFont to override it.
         c->setColour(juce::ComboBox::textColourId, HeddlePalette::text());
         c->setColour(juce::ComboBox::outlineColourId, HeddlePalette::panelFocus());
         c->setColour(juce::ComboBox::backgroundColourId, HeddlePalette::panel());
@@ -1086,6 +1159,13 @@ private:
     }
     // Append an empty target row.
     void addTargetRow() {
+        targetId_.push_back(new juce::Label("tid" + juce::String(targetId_.size()),
+                                            "t" + juce::String(targetId_.size())));
+        auto* idL = targetId_.back();
+        idL->setFont(hf(12.6f, juce::Font::bold));
+        idL->setColour(juce::Label::textColourId, HeddlePalette::textDim());
+        idL->setJustificationType(juce::Justification::centred);
+        targetsHost_->addAndMakeVisible(idL);
         targetEn_.push_back(new juce::ToggleButton("te" + juce::String(targetEn_.size())));
         auto* en = targetEn_.back();
         en->setButtonText("ON");
@@ -1093,15 +1173,15 @@ private:
         en->setClickingTogglesState(true);
         en->setColour(juce::ToggleButton::textColourId, HeddlePalette::text());
         en->setColour(juce::ToggleButton::tickColourId, HeddlePalette::accent());
-        content_->addAndMakeVisible(en);
+        targetsHost_->addAndMakeVisible(en);
         targetIp_.push_back(new juce::TextEditor("ti" + juce::String(targetIp_.size())));
         targetIp_.back()->setJustification(juce::Justification::centredLeft);
         styleInput(targetIp_.back());
-        content_->addAndMakeVisible(targetIp_.back());
+        targetsHost_->addAndMakeVisible(targetIp_.back());
         targetPort_.push_back(new juce::TextEditor("tp" + juce::String(targetPort_.size())));
         targetPort_.back()->setJustification(juce::Justification::centredLeft);
         styleInput(targetPort_.back());
-        content_->addAndMakeVisible(targetPort_.back());
+        targetsHost_->addAndMakeVisible(targetPort_.back());
         const int row = (int) targetEn_.size() - 1;
         targetClr_.push_back(new HeddleButton("tx" + juce::String(row), "x",
                                               HeddleButton::Kind::Neutral));
@@ -1109,7 +1189,7 @@ private:
             if (locked_) return;
             removeTargetRow(row);
         };
-        content_->addAndMakeVisible(targetClr_.back());
+        targetsHost_->addAndMakeVisible(targetClr_.back());
         ++numTargets_;
         refreshLayout();
         status_->setText("target row added - press APPLY", juce::dontSendNotification);
@@ -1127,15 +1207,20 @@ private:
             targetIp_[i]->setText(ip);
             targetPort_[i]->setText(pt);
         }
+        delete targetId_.back();
         delete targetEn_.back();
         delete targetIp_.back();
         delete targetPort_.back();
         delete targetClr_.back();
+        targetId_.pop_back();
         targetEn_.pop_back();
         targetIp_.pop_back();
         targetPort_.pop_back();
         targetClr_.pop_back();
         if (numTargets_ > 0) --numTargets_;
+        // Renumber the ID labels: rows below the removed one shifted up.
+        for (size_t i = 0; i < targetId_.size(); ++i)
+            targetId_[i]->setText("t" + juce::String(i), juce::dontSendNotification);
         refreshLayout();
         status_->setText("target row removed - press APPLY", juce::dontSendNotification);
     }
@@ -1288,6 +1373,20 @@ private:
         targetsHdr_ = new juce::Label("th", "TARGETS");
         styleFaintLabel(targetsHdr_);
         content_->addAndMakeVisible(targetsHdr_);
+        // The target rows live in an INNER viewport: at most
+        // kTgtPanelMax rows are visible, then the panel scrolls (the
+        // user's spec). The column headers stay fixed above it.
+        targetsHost_ = new juce::Component("thost");
+        targetsVp_ = new juce::Viewport("tvp");
+        targetsVp_->getVerticalScrollBar().setColour(juce::ScrollBar::thumbColourId,
+                                                     HeddlePalette::panelFocus());
+        targetsVp_->getVerticalScrollBar().setColour(juce::ScrollBar::trackColourId,
+                                                     HeddlePalette::baseTop());
+        targetsVp_->setViewedComponent(targetsHost_, false);
+        content_->addAndMakeVisible(targetsVp_);
+        tgtColId_ = new juce::Label("tci2", "ID");
+        styleFaintLabel(tgtColId_);
+        content_->addAndMakeVisible(tgtColId_);
         tgtColEn_ = new juce::Label("tce", "ON");
         styleFaintLabel(tgtColEn_);
         content_->addAndMakeVisible(tgtColEn_);
@@ -1297,8 +1396,17 @@ private:
         tgtColPt_ = new juce::Label("tcp", "PORT");
         styleFaintLabel(tgtColPt_);
         content_->addAndMakeVisible(tgtColPt_);
+        // Target ID labels (t0, t1, ...) sit on the left of each row inside
+        // the host; they travel with the scroll. Rows are created on demand,
+        // so the labels are created with them (see addTargetRow/build loop).
         // One live row per stored target (min 1); ADD TARGET appends more.
         for (int i = 0; i < numTargets_; ++i) {
+            targetId_.push_back(new juce::Label("tid" + juce::String(i), "t" + juce::String(i)));
+            auto* idL = targetId_.back();
+            idL->setFont(hf(12.6f, juce::Font::bold));
+            idL->setColour(juce::Label::textColourId, HeddlePalette::textDim());
+            idL->setJustificationType(juce::Justification::centred);
+            targetsHost_->addAndMakeVisible(idL);
             targetEn_.push_back(new juce::ToggleButton("te" + juce::String(i)));
             auto* en = targetEn_.back();
             en->setButtonText("ON");
@@ -1308,15 +1416,15 @@ private:
             en->setColour(juce::ToggleButton::textColourId, HeddlePalette::text());
             en->setColour(juce::ToggleButton::tickColourId, HeddlePalette::accent());
             en->onClick = [this, i] { (void) i; };
-            content_->addAndMakeVisible(en);
+            targetsHost_->addAndMakeVisible(en);
             targetIp_.push_back(new juce::TextEditor("ti" + juce::String(i)));
             targetIp_.back()->setJustification(juce::Justification::centredLeft);
             styleInput(targetIp_.back());
-            content_->addAndMakeVisible(targetIp_.back());
+            targetsHost_->addAndMakeVisible(targetIp_.back());
             targetPort_.push_back(new juce::TextEditor("tp" + juce::String(i)));
             targetPort_.back()->setJustification(juce::Justification::centredLeft);
             styleInput(targetPort_.back());
-            content_->addAndMakeVisible(targetPort_.back());
+            targetsHost_->addAndMakeVisible(targetPort_.back());
             if (owner_.cfg_.targets.size() > i) {
                 targetIp_.back()->setText(jstr(owner_.cfg_.targets[i].ip));
                 targetPort_.back()->setText(juce::String(owner_.cfg_.targets[i].port));
@@ -1328,7 +1436,7 @@ private:
                 if (locked_) return;
                 removeTargetRow(tRow);
             };
-            content_->addAndMakeVisible(targetClr_.back());
+            targetsHost_->addAndMakeVisible(targetClr_.back());
         }
         addTargetBtn_ = new HeddleButton("atd", "+ ADD TARGET", HeddleButton::Kind::Neutral);
         addTargetBtn_->onClick = [this] {
@@ -1387,7 +1495,7 @@ private:
                 routeSrc_[i]->setText(jstr(owner_.cfg_.routes[i].srcAddr));
             routeSrc_[i]->setJustification(juce::Justification::centredLeft);
             styleInput(routeSrc_[i]);
-            routeTable_->addAndMakeVisible(routeSrc_[i]);
+            routeTable_->rowsHost()->addAndMakeVisible(routeSrc_[i]);
 
             routeTgt_[i] = new juce::ComboBox("rt" + juce::String(i));
             const int tN = std::max(1, (int) targetEn_.size());
@@ -1395,21 +1503,21 @@ private:
             const int sel = owner_.cfg_.routes.size() > i ? owner_.cfg_.routes[i].targetIdx + 1 : 1;
             routeTgt_[i]->setSelectedId(juce::jlimit(1, tN, sel), juce::dontSendNotification);
             styleCombo(routeTgt_[i]);
-            routeTable_->addAndMakeVisible(routeTgt_[i]);
+            routeTable_->rowsHost()->addAndMakeVisible(routeTgt_[i]);
 
             routeSlot_[i] = new juce::TextEditor("ro" + juce::String(i));
             if (owner_.cfg_.routes.size() > i)
                 routeSlot_[i]->setText(jstr(owner_.cfg_.routes[i].slot));
             routeSlot_[i]->setJustification(juce::Justification::centredLeft);
             styleInput(routeSlot_[i]);
-            routeTable_->addAndMakeVisible(routeSlot_[i]);
+            routeTable_->rowsHost()->addAndMakeVisible(routeSlot_[i]);
 
             routeParam_[i] = new juce::TextEditor("rp" + juce::String(i));
             if (owner_.cfg_.routes.size() > i)
                 routeParam_[i]->setText(jstr(owner_.cfg_.routes[i].param));
             routeParam_[i]->setJustification(juce::Justification::centredLeft);
             styleInput(routeParam_[i]);
-            routeTable_->addAndMakeVisible(routeParam_[i]);
+            routeTable_->rowsHost()->addAndMakeVisible(routeParam_[i]);
 
             // Value mapping for this route (ARG / MIN / MAX / CURVE / K).
             const ProxyRoute* rt = owner_.cfg_.routes.size() > i ? &owner_.cfg_.routes[i] : nullptr;
@@ -1417,19 +1525,19 @@ private:
             routeArg_[i]->setText(rt ? juce::String(rt->arg) : juce::String("0"));
             routeArg_[i]->setJustification(juce::Justification::centred);
             styleInput(routeArg_[i]);
-            routeTable_->addAndMakeVisible(routeArg_[i]);
+            routeTable_->rowsHost()->addAndMakeVisible(routeArg_[i]);
 
             routeMin_[i] = new juce::TextEditor("rm" + juce::String(i));
             routeMin_[i]->setText(rt ? fmtDbl(rt->inMin) : juce::String("0"));
             routeMin_[i]->setJustification(juce::Justification::centred);
             styleInput(routeMin_[i]);
-            routeTable_->addAndMakeVisible(routeMin_[i]);
+            routeTable_->rowsHost()->addAndMakeVisible(routeMin_[i]);
 
             routeMax_[i] = new juce::TextEditor("rxm" + juce::String(i));
             routeMax_[i]->setText(rt ? fmtDbl(rt->inMax) : juce::String("1"));
             routeMax_[i]->setJustification(juce::Justification::centred);
             styleInput(routeMax_[i]);
-            routeTable_->addAndMakeVisible(routeMax_[i]);
+            routeTable_->rowsHost()->addAndMakeVisible(routeMax_[i]);
 
             routeCurve_[i] = new juce::ComboBox("rc" + juce::String(i));
             static const char* kCurveNames[] = {"identity", "exp", "invexp", "scurve"};
@@ -1437,7 +1545,7 @@ private:
             const int cSel = rt ? idFromCurve(rt->curve) : 1;
             routeCurve_[i]->setSelectedId(juce::jlimit(1, 4, cSel), juce::dontSendNotification);
             styleCombo(routeCurve_[i]);
-            routeTable_->addAndMakeVisible(routeCurve_[i]);
+            routeTable_->rowsHost()->addAndMakeVisible(routeCurve_[i]);
 
             // K: scurve curvature (#7). 0 = straight S (smoothstep once),
             // 1 = default, >1 = doubled smoothstep (sharper knee).
@@ -1445,7 +1553,7 @@ private:
             routeK_[i]->setText(rt ? fmtDbl(rt->curvature) : juce::String("1"));
             routeK_[i]->setJustification(juce::Justification::centred);
             styleInput(routeK_[i]);
-            routeTable_->addAndMakeVisible(routeK_[i]);
+            routeTable_->rowsHost()->addAndMakeVisible(routeK_[i]);
 
             const int row = i;
             routeClr_[i] = new HeddleButton("rx" + juce::String(i), "x",
@@ -1454,8 +1562,8 @@ private:
                 if (locked_) return;
                 removeRouteRow(row);
             };
-            routeTable_->addAndMakeVisible(routeClr_[i]);
 
+            routeTable_->rowsHost()->addAndMakeVisible(routeClr_[i]);
             routeTable_->attachRow(i, routeSrc_[i], routeTgt_[i], routeSlot_[i],
                                    routeParam_[i], routeArg_[i], routeMin_[i],
                                    routeMax_[i], routeCurve_[i], routeK_[i],
@@ -1538,7 +1646,7 @@ private:
         content_->addAndMakeVisible(discTgt_);
 
         discList_ = new juce::ListBox("dl", &discModel_);
-        discList_->setRowHeight(16);
+        discList_->setRowHeight(20);  // +20% (was 16)
         styleList(discList_);
         content_->addAndMakeVisible(discList_);
 
@@ -1547,7 +1655,7 @@ private:
                                    "Heddle OSC protocol (/chain/query). Drag a line from\n"
                                    "the list onto any route row — TGT, SLOT and PARAM\n"
                                    "are filled from that one gesture.");
-        discLbl_->setFont(hf(10.5f));
+        discLbl_->setFont(hf(12.6f));   // +20% (was 10.5)
         discLbl_->setColour(juce::Label::textColourId, HeddlePalette::textFaint());
         content_->addAndMakeVisible(discLbl_);
     }
@@ -1565,7 +1673,7 @@ private:
         content_->addAndMakeVisible(learnHdr_);
 
         learnList_ = new juce::ListBox("rl", &learnModel_);
-        learnList_->setRowHeight(16);
+        learnList_->setRowHeight(20);  // +20% (was 16)
         styleList(learnList_);
         content_->addAndMakeVisible(learnList_);
     }
@@ -1617,6 +1725,13 @@ private:
     juce::Label* tgtColPt_ = nullptr;
     // Dynamic target rows (unbounded — a normal rig has hundreds). The row
     // controls are created/destroyed by ADD TARGET / row "x".
+    juce::Label* tgtColId_ = nullptr;
+    juce::Component* targetsHost_ = nullptr;
+    juce::Viewport* targetsVp_ = nullptr;
+    // Dynamic target rows (unbounded — a normal rig has hundreds). The row
+    // controls are created/destroyed by ADD TARGET / row "x"; the ID label
+    // (t0, t1, ...) is the first element of each row.
+    std::vector<juce::Label*> targetId_;
     std::vector<juce::ToggleButton*> targetEn_;
     std::vector<juce::TextEditor*> targetIp_;
     std::vector<juce::TextEditor*> targetPort_;
