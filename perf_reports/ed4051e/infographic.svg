@@ -121,5 +121,5 @@
 <circle cx="1423" cy="724.5" r="2.5" fill="#38c7a2" stroke="#0b0f1a" stroke-width="1.5"/>
 <text x="1431" y="728" fill="#c6d0e6" font-size="10.5" text-anchor="start">macos-1-10.4·-23.6·+16.8</text>
 <text x="1420" y="876" fill="#5f6c88" font-size="10" text-anchor="start">6 JSON runs ok</text>
-<text x="60" y="878" fill="#5f6c88" font-size="12" text-anchor="start">Heddle v0.1.8 · commit ed4051e4c9b342c7a4a6bb5e17aa81293b7a870c · ci_run n/a · heddle_osc_perf schema 1 · 2026-11-03 21:01 UTC</text>
+<text x="60" y="878" fill="#5f6c88" font-size="12" text-anchor="start">Heddle v0.1.9 · commit ed4051e4c9b342c7a4a6bb5e17aa81293b7a870c · ci_run n/a · heddle_osc_perf schema 1 · 2026-11-03 21:01 UTC</text>
 </svg>

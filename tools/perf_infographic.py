@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""perf_infographic.py — build SVG infographics from perf/*.json runs.
+"""perf_infographic.py — build SVG infographics from perf_reports/*.json runs.
 
 Usage:
   perf_infographic.py --repo . [--only <sha7>]
 
 For every (commit, platform, layer) JSON it writes a per-run snapshot SVG
 next to the JSON (same stem, .svg), and refreshes the per-platform/layer
-trend charts under perf/trends/. Pure stdlib, no matplotlib.
+trend charts under perf_reports/trends/. Pure stdlib, no matplotlib.
 """
 import argparse, glob, json, os, sys
 
@@ -85,8 +85,8 @@ def draw_trend(svg, points, x0, y0, w, h, title, color="#58a6ff"):
 
 def load_runs(repo):
     runs = []
-    for p in glob.glob(os.path.join(repo, "perf", "*", "*-core-*.json")) + \
-             glob.glob(os.path.join(repo, "perf", "*", "*-host-*.json")):
+    for p in glob.glob(os.path.join(repo, "perf_reports", "*", "*-core-*.json")) + \
+             glob.glob(os.path.join(repo, "perf_reports", "*", "*-host-*.json")):
         try:
             runs.append(json.load(open(p, encoding="utf-8")))
         except Exception as e:
@@ -129,7 +129,7 @@ def run_snapshot(repo, r):
 
 def trend_charts(repo):
     runs = load_runs(repo)
-    tdir = os.path.join(repo, "perf", "trends")
+    tdir = os.path.join(repo, "perf_reports", "trends")
     os.makedirs(tdir, exist_ok=True)
     out = []
     groups = {}
@@ -167,8 +167,8 @@ def main():
         r["_path"] = None
     # re-path
     import glob as g
-    paths = (g.glob(os.path.join(a.repo, "perf", "*", "*-core-*.json")) +
-             g.glob(os.path.join(a.repo, "perf", "*", "*-host-*.json")))
+    paths = (g.glob(os.path.join(a.repo, "perf_reports", "*", "*-core-*.json")) +
+             g.glob(os.path.join(a.repo, "perf_reports", "*", "*-host-*.json")))
     by_path = {p: json.load(open(p, encoding="utf-8")) for p in paths}
     n = 0
     for p, r in by_path.items():

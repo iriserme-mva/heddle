@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """perf_commit_infographic.py — build ONE per-commit perf infographic SVG.
 
-Reads the per-run JSON files of a single commit dir (perf/<sha7>/, up to
+Reads the per-run JSON files of a single commit dir (perf_reports/<sha7>/, up to
 <platform>-<layer>-<stamp>.json, schema 1, tool heddle_osc_perf) and writes
-perf/<sha7>/infographic.svg (1600x900, dark theme, per-run "verify" style).
+perf_reports/<sha7>/infographic.svg (1600x900, dark theme, per-run "verify" style).
 
 Optionally compares against up to two prior commit dirs for delta coloring,
 a verdict one-liner, and the delta sidebar. When no prior commit exists the
@@ -21,7 +21,7 @@ Panels:
 
 Pure Python 3 stdlib (no matplotlib/PIL). Same committed-script-in-CI
 mechanism as perf_infographic.py: the perf_commit job runs this after laying
-the JSONs into perf/<sha7>/ and the existing `git add -A perf/` commits the
+the JSONs into perf_reports/<sha7>/ and the existing `git add -A perf_reports/` commits the
 SVG alongside the JSONs and trend charts.
 
 Usage:
@@ -96,7 +96,7 @@ def fmt_stamp(t):
 
 def load_commit_dir(repo, sha7):
     """{ (platform, layer): json } for one commit dir (latest per key)."""
-    d = os.path.join(repo, "perf", sha7)
+    d = os.path.join(repo, "perf_reports", sha7)
     if not os.path.isdir(d):
         return None
     best = {}
@@ -122,7 +122,7 @@ def m(run, key, default=None):
 
 def dir_min_stamp(repo, name):
     ts = []
-    for f in glob.glob(os.path.join(repo, "perf", name, "*.json")):
+    for f in glob.glob(os.path.join(repo, "perf_reports", name, "*.json")):
         try:
             t = parse_stamp(json.load(open(f, encoding="utf-8")).get("generated_at"))
         except Exception:
@@ -136,7 +136,7 @@ def prior_commits(repo, sha7, n):
     """Up to n prior commit dirs, newest-first. Order: git history when the
     checkout has it (full local clones), else run timestamps (CI depth-1
     checkout; timestamps are run-time-correct for CI-produced JSONs)."""
-    perf = os.path.join(repo, "perf")
+    perf = os.path.join(repo, "perf_reports")
     known = {d for d in os.listdir(perf)
              if os.path.isdir(os.path.join(perf, d)) and d != "trends"}
     order = []
@@ -440,7 +440,7 @@ def main():
     sha7 = a.commit[:7]
     cur = load_commit_dir(repo, sha7)
     if not cur:
-        sys.exit(f"no perf JSONs found in {os.path.join(repo, 'perf', sha7)}")
+        sys.exit(f"no perf JSONs found in {os.path.join(repo, 'perf_reports', sha7)}")
     priors = (a.prior or [])[:2]
     if not priors:
         priors = prior_commits(repo, sha7, 1)
@@ -452,7 +452,7 @@ def main():
             prior, prior_label = d, p7
             break
     build(cur, prior, repo, sha7, prior_label)
-    out = os.path.join(repo, "perf", sha7, "infographic.svg")
+    out = os.path.join(repo, "perf_reports", sha7, "infographic.svg")
     with open(out, "w", encoding="utf-8") as f:
         f.write("\n".join(T))
     print(f"infographic -> {out} ({os.path.getsize(out)} bytes, prior={prior_label})")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """perf_to_json.py — convert one osc_perf*.txt run output into a schema-1 JSON
-under perf/<commit-sha7>/<platform>-<layer>-<utc-stamp>.json.
+under perf_reports/<commit-sha7>/<platform>-<layer>-<utc-stamp>.json.
 
 Usage: perf_to_json.py --txt osc_perf_core.txt --repo . \
     --commit <full-sha> --platform windows-latest [--layer auto]
@@ -11,7 +11,7 @@ Marker selection: core files contain @@HEDDLE_OSC_PERF@@, host files
 import argparse, json, os, re, sys, datetime
 
 
-def convert(txt, repo, commit, platform, layer, dest="perf"):
+def convert(txt, repo, commit, platform, layer, dest="perf_reports"):
     raw = open(txt, encoding="utf-8", errors="replace").read()
     m = re.search(r"@@HEDDLE_OSC_PERF(?:_HOST)?@@\r?\n([\s\S]*?)\r?\n@@END@@", raw)
     if not m:
@@ -55,7 +55,7 @@ def main():
     ap.add_argument("--commit", required=True)
     ap.add_argument("--platform", required=True)
     ap.add_argument("--layer", default="")
-    ap.add_argument("--dest", default="perf")
+    ap.add_argument("--dest", default="perf_reports")
     a = ap.parse_args()
     convert(a.txt, a.repo, a.commit, a.platform, a.layer, a.dest)
 
