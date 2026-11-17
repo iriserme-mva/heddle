@@ -67,6 +67,33 @@ if(WIN32)
     target_link_libraries(heddle_smoke PRIVATE ws2_32 winmm)
 endif()
 
+# ---- repro CLI (Ableton open-sequence freeze locator) ----------------------
+# heddle_repro <path-to-plugin.vst3> [pumpSeconds]
+# Drives the full DAW "open" sequence (instantiate -> prepare ->
+# setStateInformation -> createEditor -> addToDesktop -> pump) against a real
+# VST3 and logs each phase, so the last logged phase on a timeout is the
+# freeze point. Same module set as the smoke CLI.
+add_executable(heddle_repro
+    src/repro.cpp
+)
+target_link_libraries(heddle_repro
+    PRIVATE
+        juce::juce_core
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_audio_processors
+)
+target_compile_definitions(heddle_repro PRIVATE JUCE_WEB_BROWSER=0)
+target_compile_definitions(heddle_repro PRIVATE JUCE_USE_CURL=0)
+target_compile_definitions(heddle_repro PRIVATE JUCE_PLUGINHOST_VST3=1)
+# Needed for MessageManager::runDispatchLoopUntil (JUCE 8 disables the modal
+# dispatch loop by default).
+target_compile_definitions(heddle_repro PRIVATE JUCE_MODAL_LOOPS_PERMITTED=1)
+if(WIN32)
+    target_link_libraries(heddle_repro PRIVATE ws2_32 winmm)
+endif()
+
 # ---- render CLI (offline audio->audio) ------------------------------------
 # heddle-render <input.wav> <chain.json> <output.wav> [--bits 16|24|32]
 #

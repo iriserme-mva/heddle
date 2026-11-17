@@ -1593,7 +1593,24 @@ private:
         // rows, seeded from the stored routes. ADD ROUTE appends a row and
         // each row's "x" destroys it — no pre-built spares, so no null
         // control can ever be dereferenced (the old crash).
-        for (int i = 0; i < numRows_; ++i)
+        //
+        // BUGFIX (Ableton hangs/freezes on open — two faults the on-demand
+        // vector refactor left behind, both in this one loop):
+        //   1. buildRouteRow() bumps numRows_, so `for (i < numRows_)`
+        //      re-reads the growing member each iteration and NEVER
+        //      terminates: the UI thread pegged creating route rows forever
+        //      (watched reaching 74,000+ rows), freezing the DAW on open.
+        //      -> capture the bound up front.
+        //   2. the ctor already set numRows_ to the desired count, and
+        //      buildRouteRow() bumps it AGAIN, so without a reset the count
+        //      ends up 2× the real row count; fieldSnapshot()/the 4 Hz tick
+        //      then index route controls past the end of the vectors and
+        //      segfault on the first editor tick. -> start counting from 0.
+        // This keeps the invariant numRows_ == routeSrc_.size() that the
+        // read loops (readInputs, fieldSnapshot, resized) rely on.
+        const int nRows = numRows_;
+        numRows_ = 0;
+        for (int i = 0; i < nRows; ++i)
             buildRouteRow(owner_.cfg_.routes.size() > i
                               ? &owner_.cfg_.routes[i] : nullptr);
         routeTable_->setActiveRows(numRows_);
