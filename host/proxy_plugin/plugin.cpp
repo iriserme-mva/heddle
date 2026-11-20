@@ -43,6 +43,25 @@ using RecentMsg = heddle::ProxyEngine::RecentMsg;  // nested type, not covered b
 // std::string ctor is not used so the char-set is explicit).
 inline juce::String jstr(const std::string& x) { return juce::String::fromUTF8(x.data()); }
 
+// ---------------------------------------------------------------------------
+// Field-forensics log (0.1.12): the 0.1.11 drag guard was falsified in the
+// field, and this box has no Ableton / no synthetic-OS-drag repro, so the next
+// test must be able to tell us the EXACT sequence around a crash. Every drag
+// source event and every learn-list rebuild is appended (best-effort, guarded)
+// to ~\HeddleProxy\debug.log with a millisecond timestamp. Cheap, and it
+// survives the crash (the line is flushed per write) so we can read what the
+// user was doing at drag start even if the host dies.
+// ---------------------------------------------------------------------------
+static void fieldLog(const juce::String& what) {
+    try {
+        const juce::File f = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+            .getChildFile("HeddleProxy").getChildFile("debug.log");
+        if (f.getParentDirectory().exists() || f.getParentDirectory().createDirectory())
+            f.appendText(juce::String(juce::Time::currentTimeMillis()) + "  " + what
+                         + juce::newLine);
+    } catch (...) {}
+}
+
 // Forward decl: the editor is defined after the processor (createEditor()
 // returns a new one).
 class ProxyEditor;
@@ -273,6 +292,11 @@ public:
         if (rows.size() <= 0) return juce::var();
         const int row = rows[0];
         if (row < 0 || row >= (int) entries_.size()) return juce::var();
+        fieldLog("DRAG-START source=discovered row=" + juce::String(row)
+                 + " rowsInList=" + juce::String(entries_.size())
+                 + " tgt=" + juce::String(entries_[row].targetIdx)
+                 + " slot=" + juce::String(entries_[row].p.slot)
+                 + " param=" + jstr(entries_[row].p.param));
         const auto& e = entries_[row];
         return dragVarDiscovered(e.targetIdx, e.p.slot, e.p.param);
     }
@@ -326,15 +350,27 @@ public:
         if (rows.size() <= 0) return juce::var();
         const int row = rows[0];
         if (row < 0 || row >= (int) entries_.size()) return juce::var();
+        fieldLog("DRAG-START source=learn row=" + juce::String(row)
+                 + " rowsInList=" + juce::String(entries_.size())
+                 + " addr=" + jstr(entries_[row].addr));
         const auto& e = entries_[row];
         return dragVarReceived(e.addr, e.numFloats);
     }
     void refresh(const std::vector<RecentMsg>& rec, juce::ListBox* list) {
         list_ = list;
+        const int before = (int) entries_.size();
         entries_.clear();
         entries_.reserve(rec.size());
         for (const auto& m : rec) entries_.push_back({m.addr, m.numFloats});
         if (list != nullptr) list->updateContent();
+        // Only log when the row COUNT actually changes — that's the only
+        // rebuild that can remap a row index under a held button. (A
+        // value-only refresh repaints in place and is harmless.)
+        if (before != (int) entries_.size())
+            fieldLog("learn-rebuild rows " + juce::String(before) + " -> "
+                     + juce::String(entries_.size())
+                     + " buttonDown=" + juce::String(
+                         (int) juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown()));
     }
 
 private:
@@ -679,6 +715,7 @@ public:
         hoverCol_ = -1;
         repaint();
         if (row < 0 || row >= activeRows_ || locked_) return;
+        fieldLog("DROP row=" + juce::String(row) + " activeRows=" + juce::String(activeRows_));
         if (cb_) cb_(row, s.description);
     }
 
@@ -951,13 +988,35 @@ public:
             readInputs();
         }
         refreshStatus();
-        // Do NOT rebuild the learn list while a drag-and-drop is in flight:
-        // updateContent() destroys and recreates the list's row components, and
-        // JUCE's drag machinery still holds live references to them — the
-        // classic mid-drag use-after-free that crashes the whole host (Ableton)
-        // when a param is dragged onto a route row. The learn list simply
-        // refreshes on the next 4 Hz tick once the drop has completed.
-        if (juce::Desktop::getInstance().getNumDraggingMouseSources() == 0)
+        // Do NOT rebuild the learn list for the ENTIRE window a mouse button
+        // is held down — not just once the drag has registered.
+        //
+        // Why isAnyMouseButtonDown() and not getNumDraggingMouseSources():
+        //   JUCE's row drag begins inside RowComponent::mouseDrag, i.e. the
+        //   instant e.mouseWasDraggedSinceMouseDown() first goes true. From
+        //   mouse-DOWN until that drag threshold crosses, there is still NO
+        //   registered drag source, so getNumDraggingMouseSources() == 0 and
+        //   a getNumDraggingMouseSources()==0 guard is a no-op exactly in the
+        //   "just start to drag" window. During that same window this 4 Hz
+        //   tick runs learnModel_.refresh() -> list->updateContent(), which
+        //   re-maps the POOLED row components (RowComponent::row / selection
+        //   are rewritten via updateRowAndSelection) under the held button —
+        //   the row the user is about to drag has its index remapped /
+        //   repainted mid-gesture, which is the drag-start crash. (The fork's
+        //   ListViewport recycles rows in a ring buffer; it never destroys
+        //   them, so the hazard is state remap, not destruction — but the
+        //   fix is the same: no list mutation while the button is down.)
+        //   ModifierKeys::currentModifiers.isAnyMouseButtonDown() is true from
+        //   the moment any button goes down until it comes up, so the learn
+        //   list is frozen for the whole press->release span and simply
+        //   refreshes on the next tick after release. (The || desktop check
+        //   is a belt-and-braces backstop that also covers an in-flight
+        //   registered drag if a button-up ever lands first.)
+        const bool anyButtonHeld =
+            juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown();
+        const int draggingSources =
+            juce::Desktop::getInstance().getNumDraggingMouseSources();
+        if (!anyButtonHeld && draggingSources == 0)
             refreshLearn();
     }
 

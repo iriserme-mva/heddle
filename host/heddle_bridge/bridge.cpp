@@ -398,6 +398,23 @@ struct BridgeSettings {
     // — one line, so the key=value file parser needs no change. Empty = none.
     juce::String chainJson;
 
+    // 0.1.12 "VST list disappears" fix: set true only when the user actually
+    // changed something (added/removed/moved/renamed a slot, saved/loaded a
+    // config, browsed the host exe, or started the host). The editor's
+    // destructor stores ONLY when dirty.
+    //
+    // Why this is the fix: Ableton can keep more than one Bridge editor alive
+    // (a second instance from an old project, or a pooled/pre-created one).
+    // The 0.1.11-and-earlier destructor called settings_.store() UNCONDITIONALLY.
+    // So a stale second instance that had loaded when the file was still empty
+    // (or predates the current chain) destroyed its own empty slots_ into
+    // settings.json the moment the DAW closed or tore it down — silently
+    // clobbering the real editor's saved chain. The write path and the parser
+    // are both clean/atomic (verified in 0.1.11); the clobber was purely the
+    // unconditional dtor store from an instance that never edited anything.
+    // Gating the dtor on dirty means a viewer-only instance never writes.
+    mutable bool dirty_ = false;
+
     static juce::File file() {
         return juce::File::getSpecialLocation(juce::File::userHomeDirectory)
             .getChildFile(kAppName).getChildFile(kSettingsFileName);
@@ -419,8 +436,22 @@ struct BridgeSettings {
             else if (k == "oscPort")    { int x = v.getIntValue(); if (x > 0) oscPort = x; }
             else if (k == "chainJson")  chainJson = v;
         }
+        // Field-forensics (0.1.12): record that an instance loaded the file and
+        // what it read, so we can see if two instances are loading different
+        // contents (the clobber signature).
+        try {
+            juce::File lf = f.getParentDirectory().getChildFile("debug.log");
+            lf.appendText(juce::String(juce::Time::currentTimeMillis())
+                          + "  load chainJsonBytes=" + juce::String(chainJson.getNumBytesAsUTF8())
+                          + " hostExe=" + hostExe + juce::newLine);
+        } catch (...) {}
     }
     bool store() const {
+        // Any editor that persists is, by definition, one the user has used —
+        // mark it dirty so a later dtor re-persist is safe. (The dtor is gated
+        // on dirty(), so a viewer-only instance that never reaches here keeps
+        // its flag false and never overwrites the file on teardown.)
+        dirty_ = true;
         juce::String out;
         out << "hostExe="    << hostExe << juce::newLine;
         out << "lastConfig=" << lastConfig << juce::newLine;
@@ -429,8 +460,18 @@ struct BridgeSettings {
         out << "chainJson="  << chainJson << juce::newLine;
         const juce::File f = file();
         if (!f.getParentDirectory().exists()) f.getParentDirectory().createDirectory();
-        return f.replaceWithText(out);
+        const bool ok = f.replaceWithText(out);
+        try {
+            f.getParentDirectory().getChildFile("debug.log")
+             .appendText(juce::String(juce::Time::currentTimeMillis())
+                         + "  store chainJsonBytes=" + juce::String(chainJson.getNumBytesAsUTF8())
+                         + " dirty=" + juce::String((int) dirty_)
+                         + " ok=" + juce::String((int) ok) + juce::newLine);
+        } catch (...) {}
+        return ok;
     }
+    bool dirty() const { return dirty_; }
+    void setDirty(bool d) { dirty_ = d; }
 };
 
 // Build the heddle ChainConfig from the launcher model and serialise it.
@@ -687,7 +728,25 @@ public:
         startTimerHz(2);
     }
 
-    ~BridgeEditor() override { settings_.store(); }
+    ~BridgeEditor() override {
+        // 0.1.12: persist ONLY if this instance actually wrote something.
+        // An unconditional store() here is what let a stale second instance
+        // (empty slots_, loaded when the file was empty or before the chain
+        // existed) clobber settings.json with an empty chain on teardown —
+        // the "VST list disappears" bug. A viewer-only instance has dirty()==
+        // false and must not touch the file.
+        if (settings_.dirty())
+            settings_.store();
+        else {
+            try {
+                BridgeSettings::file().getParentDirectory()
+                    .getChildFile("debug.log")
+                    .appendText(juce::String(juce::Time::currentTimeMillis())
+                                + "  dtor SKIP (not dirty; slots="
+                                + juce::String(slots_.size()) + ")" + juce::newLine);
+            } catch (...) {}
+        }
+    }
 
     void paint(juce::Graphics& g) override {
         g.fillAll(juce::Colour(0xff1e1e1e));
