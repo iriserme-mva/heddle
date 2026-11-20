@@ -433,7 +433,11 @@ struct HeddleLayout {
     static int targetsVisibleH(int tRows) {
         return juce::jmin(tRows, kTgtPanelMax) * tRowH + 4;
     }
-    static int r0(int tRows) { return t0 + 36 + targetsVisibleH(tRows) + 46; }
+    // Gap below the "+ Add target" button before the routes header. Must be big
+    // enough that routesHdr_ (placed at r0-30, h16) clears the add-target
+    // button (top tvTop+tvh+8, h28, i.e. bottom 88+tvh): with a 46px gap the
+    // "ROUTES" label painted at 68+tvh overlapped the button on every layout.
+    static int r0(int tRows) { return t0 + 36 + targetsVisibleH(tRows) + 72; }
     static constexpr int rHeaderH = 40;  // route-table header zone (hdr + cols)
     static constexpr int rRowH = 36;
     static int tableH(int rRows) {
@@ -947,7 +951,14 @@ public:
             readInputs();
         }
         refreshStatus();
-        refreshLearn();
+        // Do NOT rebuild the learn list while a drag-and-drop is in flight:
+        // updateContent() destroys and recreates the list's row components, and
+        // JUCE's drag machinery still holds live references to them — the
+        // classic mid-drag use-after-free that crashes the whole host (Ableton)
+        // when a param is dragged onto a route row. The learn list simply
+        // refreshes on the next 4 Hz tick once the drop has completed.
+        if (juce::Desktop::getInstance().getNumDraggingMouseSources() == 0)
+            refreshLearn();
     }
 
     void paint(juce::Graphics& g) override {

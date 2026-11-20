@@ -1,9 +1,9 @@
-Heddle v0.1.10 - full Windows build (repo: iriserme-mva/heddle)
+Heddle v0.1.11 - full Windows build (repo: iriserme-mva/heddle)
 Commit: 528cbce (route-row hang fix)  Build date: 2026-11-17 (W. Europe)
 MSVC x64 Release build clean; core tests green (CI + local ctest).
 
 Contents
-  heddle-0.1.10-win-x64.msi   MSI installer (see below) - recommended
+  heddle-0.1.11-win-x64.msi   MSI installer (see below) - recommended
   bin/heddle-host.exe         standalone live host: loads a chain, live audio I/O, OSC control protocol
   bin/heddle-render.exe       offline audio renderer: heddle-render input.wav chain.json output.wav
   bin/heddle-proxy.exe        OSC fan-out router (no audio, no DAW needed)
@@ -18,20 +18,20 @@ NOTE on the MSI filename in mail-delivered archives
   Inside a mail-delivered 7z the installer is stored under a neutral name
   (heddle-installer-x64, no ".msi" extension) because some mail scanners
   reject the .msi extension by pattern. After extracting, RENAME the file
-  to heddle-0.1.10-win-x64.msi before double-clicking. In the loose zip the
+  to heddle-0.1.11-win-x64.msi before double-clicking. In the loose zip the
   file already carries its real .msi name.
 
-MSI installer (heddle-0.1.10-win-x64.msi)
+MSI installer (heddle-0.1.11-win-x64.msi)
   Per-machine, 64-bit. Double-click to install (UAC elevation prompt is
   normal - it writes into Program Files). Installs to:
-    C:\Program Files\Heddle_v0.1.10\
+    C:\Program Files\Heddle_v0.1.11\
       bin\    the three executables
       LICENSE, README.txt
   VST3 plugins: the installer has its own "VST3 plugins" location line.
     Default: C:\Program Files\Common Files\VST3  (machine-wide DAW discovery)
     -> change it to your own VST3 folder if you keep plugins elsewhere
        (relative to C:, e.g. "Program Files\Steinberg\VST3")
-  Start menu:  Start > All Programs > Heddle_v0.1.10 >  Heddle Host / Heddle Render / Heddle Proxy
+  Start menu:  Start > All Programs > Heddle_v0.1.11 >  Heddle Host / Heddle Render / Heddle Proxy
   Uninstall:  Settings > Apps > Heddle.
   Upgrades the 0.1.8/0.1.9 install in place (same product UpgradeCode).
   (If you prefer loose files over the installer: copy bin\* to any folder
@@ -102,5 +102,5 @@ Integrity (sha256 / md5 / size; verify with
                          md5 fe1d39df58ddbc6658a5059560d295b6   (47,616 bytes)
   LICENSE                617310cac2e15d9033e4fb0b9b42af4b7616bd6b7209d5b31c61bc4c181eac6b
                          md5 44447db2f3bfc0ba6a0ef45f9a2730c7   (39,210 bytes)
-  heddle-0.1.10-win-x64.msi   hash in the delivery message (a file cannot carry its own hash;
+  heddle-0.1.11-win-x64.msi   hash in the delivery message (a file cannot carry its own hash;
                          it is the only artifact not fingerprinted above)

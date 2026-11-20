@@ -816,12 +816,24 @@ private:
         int rate = settings_.sampleRate, port = settings_.oscPort;
         juce::String err;
         if (parseConfigText(text, slots_, rate, port, err)) {
-            slots_.removeIf([](const SlotEntry& s) { return !juce::File(s.path).exists(); });
+            // Keep every saved slot — even ones whose plugin file is missing
+            // right now (the launcher is a VST3 whose install dir is versioned,
+            // so an in-place upgrade makes the old paths stale; the user should
+            // re-point or re-add them, and silently dropping them from the list
+            // is what made the saved chain look "not to persist").
+            int stale = 0;
+            for (const auto& s : slots_)
+                if (!juce::File(s.path).exists()) ++stale;
             if (rate > 0) { settings_.sampleRate = rate; srValue_.setText(juce::String(rate), juce::dontSendNotification); }
             if (port > 0) { settings_.oscPort = port; oscValue_.setText(juce::String(port), juce::dontSendNotification); }
             list_.updateContent();
-            status_.setText("restored " + juce::String(slots_.size()) + " saved module(s)",
+            status_.setText("restored " + juce::String(slots_.size()) + " saved module(s)"
+                               + (stale > 0 ? "  (" + juce::String(stale)
+                                            + " plugin path(s) not found — re-point or remove)"
+                                            : ""),
                             juce::dontSendNotification);
+            if (stale > 0)
+                status_.setColour(juce::Label::textColourId, juce::Colours::orange);
         }
     }
     void persistSlots() {
