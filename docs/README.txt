@@ -1,5 +1,5 @@
 Heddle v0.1.13 - full Windows build (repo: iriserme-mva/heddle)
-Commit: 876c43d (bridge-restore fix + drag forensics + stable install path)  Build date: 2026-11-21 (W. Europe)
+Commit: 74e9b6c (bridge-restore fix + drag forensics + stable install path)  Build date: 2026-11-21 (W. Europe)
 MSVC x64 Release build clean; core tests green (CI + local ctest, 79/79).
 
 Contents
@@ -54,7 +54,7 @@ VST3: drop HeddleProxy.vst3 into your VST3 folder, insert on a track,
 open its editor UI to configure routes/mapping visually (save writes the config
 JSON next to the patch).
 
-New in this build (876c43d)
+New in this build (74e9b6c)
   - FIX (bridge): the DAW-facing HeddleBridge VST3 no longer forgets the
     module list. It saved the slot/param list as raw base64 but read it back
     with a decoder that expects a "<bytecount>." prefix, so every restore
