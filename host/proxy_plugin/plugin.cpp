@@ -258,6 +258,7 @@ public:
     };
 
     int getNumRows() override { return (int) entries_.size(); }
+    int entriesSize() const { return (int) entries_.size(); }  // field-forensics
     void paintListBoxItem(int row, juce::Graphics& g, int, int height, bool selected) override {
         if (row < 0 || row >= (int) entries_.size()) return;
         const auto& e = entries_[row];
@@ -324,6 +325,7 @@ public:
     };
 
     int getNumRows() override { return (int) entries_.size(); }
+    int entriesSize() const { return (int) entries_.size(); }  // field-forensics
     void paintListBoxItem(int row, juce::Graphics& g, int, int height, bool selected) override {
         if (row < 0 || row >= (int) entries_.size()) return;
         const auto& e = entries_[row];
@@ -699,15 +701,38 @@ public:
     void itemDragEnter(const juce::DragAndDropTarget::SourceDetails& s) override {
         updateHover(s.localPosition);
         repaint();
+        // 0.1.13 field-forensics: the drag crash reproduces on a RECEIVED
+        // ("sensor surface") element drag despite the 0.1.12 learn-rebuild
+        // guard. Nothing between DRAG-START and DROP was logged, so a crash
+        // mid-drag left no trace. Log every drop-target event (move throttled)
+        // to the crash-surviving field log; the last line before the freeze is
+        // the crash site.
+        fieldLog("DRAG-ENTER row=" + juce::String(hoverRow_)
+                 + " col=" + juce::String(hoverCol_)
+                 + " x=" + juce::String(s.localPosition.x)
+                 + " y=" + juce::String(s.localPosition.y)
+                 + " activeRows=" + juce::String(activeRows_));
     }
     void itemDragMove(const juce::DragAndDropTarget::SourceDetails& s) override {
         updateHover(s.localPosition);
         repaint();
+        // Throttled (move fires many times per frame). A full log at drag-end
+        // isn't available (a crash IS the failure), so a few throttled samples
+        // are enough to bound the crash window without flooding the file.
+        const int64_t now = juce::Time::currentTimeMillis();
+        if (now - lastMoveLogMs_ >= 120) {
+            lastMoveLogMs_ = now;
+            fieldLog("DRAG-MOVE row=" + juce::String(hoverRow_)
+                     + " col=" + juce::String(hoverCol_)
+                     + " x=" + juce::String(s.localPosition.x)
+                     + " y=" + juce::String(s.localPosition.y));
+        }
     }
     void itemDragExit(const juce::DragAndDropTarget::SourceDetails&) override {
         hoverRow_ = -1;
         hoverCol_ = -1;
         repaint();
+        fieldLog("DRAG-EXIT (left route table)");
     }
     void itemDropped(const juce::DragAndDropTarget::SourceDetails& s) override {
         const int row = rowFromY(s.localPosition.y);
@@ -717,6 +742,7 @@ public:
         if (row < 0 || row >= activeRows_ || locked_) return;
         fieldLog("DROP row=" + juce::String(row) + " activeRows=" + juce::String(activeRows_));
         if (cb_) cb_(row, s.description);
+        fieldLog("DROP-CB-DONE row=" + juce::String(row));
     }
 
     void paint(juce::Graphics& g) override {
@@ -776,6 +802,7 @@ private:
     bool locked_ = false;
     int hoverRow_ = -1;
     int hoverCol_ = -1;
+    int64_t lastMoveLogMs_ = 0;  // throttling for DRAG-MOVE field-forensics
 
     juce::Label* hdr_ = nullptr;
     juce::Label* cSrc_ = nullptr;
@@ -1016,6 +1043,27 @@ public:
             juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown();
         const int draggingSources =
             juce::Desktop::getInstance().getNumDraggingMouseSources();
+        // 0.1.13 field-forensics: heartbeat during any press/drag. The drop
+        // target only logs while the pointer is OVER the route table; this
+        // covers the span from DRAG-START (row picked up) until the pointer
+        // enters the table, and — because it keeps ticking while the button is
+        // held — the last heartbeat logged before a crash pins which phase the
+        // process died in (pre-table vs in-table vs dropped). Edge-logged on
+        // the press/drag transition, then sampled every 120 ms.
+        const bool dragActive = anyButtonHeld || draggingSources > 0;
+        if (dragActive != lastDragActive_ ||
+            (dragActive && juce::Time::currentTimeMillis() - lastDragHeartMs_ >= 120)) {
+            if (dragActive && !lastDragActive_)
+                fieldLog("TICK-DRAG-START buttonDown=" + juce::String((int)anyButtonHeld)
+                         + " dragSrc=" + juce::String(draggingSources));
+            lastDragActive_ = dragActive;
+            lastDragHeartMs_ = juce::Time::currentTimeMillis();
+            if (draggingSources > 0)
+                fieldLog("TICK-DRAG buttonDown=" + juce::String((int)anyButtonHeld)
+                         + " dragSrc=" + juce::String(draggingSources)
+                         + " learnRows=" + juce::String((int)learnModel_.entriesSize())
+                         + " discRows=" + juce::String((int)discModel_.entriesSize()));
+        }
         if (!anyButtonHeld && draggingSources == 0)
             refreshLearn();
     }
@@ -1889,6 +1937,10 @@ private:
     juce::ListBox* learnList_ = nullptr;
     RecentModel learnModel_;
     std::string lastLearnSig_;
+
+    // 0.1.13 drag-crash field-forensics: heartbeat state for timerCallback.
+    bool lastDragActive_ = false;   // (anyButtonHeld || dragSource>0) last tick
+    int64_t lastDragHeartMs_ = 0;    // last heartbeat ms (throttling)
 
     // #9: last field snapshot; timerCallback re-reads only when it changes.
     std::string lastSnap_;

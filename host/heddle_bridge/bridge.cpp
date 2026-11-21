@@ -863,15 +863,47 @@ private:
     // every time the editor (or the DAW) closed. Persist it to settings.json
     // as base64 chain JSON and restore it on next open. Slots whose plugin
     // file no longer exists are dropped (stale path, nothing to load).
+    // Append one line to the same field-forensics debug.log the load/store
+    // paths use (settings file's parent dir), so a restore failure is visible
+    // in the field instead of silent (the 0.1.12 bug was exactly this: a
+    // silent early-return left the list empty with no trace).
+    void logRestore(const juce::String& what) {
+        try {
+            BridgeSettings::file().getParentDirectory().getChildFile("debug.log")
+                .appendText(juce::String(juce::Time::currentTimeMillis())
+                            + "  restore " + what + juce::newLine);
+        } catch (...) {}
+    }
+    void failRestore(const juce::String& what) {
+        logRestore("FAIL " + what);
+        status_.setText("could not restore saved module list: " + what,
+                        juce::dontSendNotification);
+        status_.setColour(juce::Label::textColourId, juce::Colours::red);
+    }
     void restoreSlots() {
         if (settings_.chainJson.isEmpty()) return;
-        juce::MemoryBlock mb;
-        if (!mb.fromBase64Encoding(settings_.chainJson)
-            || mb.getSize() == 0 || mb.getData() == nullptr)
+        // 0.1.13 fix: persistSlots() ENCODES with Base64::toBase64, which
+        // produces RAW base64 (no prefix). The old code decoded with
+        // MemoryBlock::fromBase64Encoding, which requires a "<bytecount>."
+        // prefix and returns false for raw base64 — so EVERY restore of a
+        // saved chain silently failed and the module list looked empty on
+        // reopen. Decode with the matching raw-format Base64::convertFromBase64.
+        juce::MemoryOutputStream mb;
+        if (!juce::Base64::convertFromBase64(mb, settings_.chainJson)) {
+            failRestore(juce::String("base64 decode failed (bytes=")
+                        + juce::String(settings_.chainJson.getNumBytesAsUTF8()) + ")");
             return;
+        }
+        if (mb.getDataSize() == 0 || mb.getData() == nullptr) {
+            failRestore("decoded 0 bytes");
+            return;
+        }
         const juce::String text =
-            juce::String(reinterpret_cast<const char*>(mb.getData()), mb.getSize());
-        if (text.trim().isEmpty()) return;
+            juce::String(reinterpret_cast<const char*>(mb.getData()), mb.getDataSize());
+        if (text.trim().isEmpty()) {
+            failRestore("decoded text empty");
+            return;
+        }
         int rate = settings_.sampleRate, port = settings_.oscPort;
         juce::String err;
         if (parseConfigText(text, slots_, rate, port, err)) {
@@ -893,6 +925,13 @@ private:
                             juce::dontSendNotification);
             if (stale > 0)
                 status_.setColour(juce::Label::textColourId, juce::Colours::orange);
+            logRestore("OK slots=" + juce::String(slots_.size())
+                       + " stale=" + juce::String(stale)
+                       + " decodedBytes=" + juce::String(mb.getDataSize()));
+        } else {
+            // parseConfigText left slots_ untouched (it only assigns on success),
+            // so the list keeps whatever it had before this call.
+            failRestore("config parse failed: " + err);
         }
     }
     void persistSlots() {
