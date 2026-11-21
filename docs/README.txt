@@ -1,6 +1,6 @@
 Heddle v0.1.13 - full Windows build (repo: iriserme-mva/heddle)
-Commit: TBD (bridge-restore fix + drag forensics)  Build date: 2026-11-21 (W. Europe)
-MSVC x64 Release build clean; core tests green (CI + local ctest).
+Commit: 876c43d (bridge-restore fix + drag forensics + stable install path)  Build date: 2026-11-21 (W. Europe)
+MSVC x64 Release build clean; core tests green (CI + local ctest, 79/79).
 
 Contents
   heddle-0.1.13-win-x64.msi   MSI installer (see below) - recommended
@@ -54,25 +54,29 @@ VST3: drop HeddleProxy.vst3 into your VST3 folder, insert on a track,
 open its editor UI to configure routes/mapping visually (save writes the config
 JSON next to the patch).
 
-New in this build (528cbce)
-  - CRITICAL FIX: Ableton (and any DAW) froze on opening a session that
-    contains the 0.1.9 HeddleProxy / HeddleBridge plugin. The route-table
-    loop in the editor's constructor looped "for (i < numRows_)" while
-    buildRouteRow() bumped numRows_ every iteration, so the loop bound grew
-    with every iteration and never terminated: the message thread was pegged
-    creating route rows forever, freezing the whole DAW. A second latent
-    double-count left numRows_ at 2x the real row count, which would have
-    segfaulted the editor on its first 4 Hz refresh. Fixed: the row count is
-    captured up front and counting starts from 0, restoring the invariant
-    numRows_ == routeSrc_.size() that the read loops rely on. Both faults were
-    introduced by the 0.1.9 on-demand vector route-table refactor (ed4051e)
-    and replaced the previously bounded 64-row table loop. Verified with a
-    new open-sequence test harness (host/src/repro.cpp, heddle_repro) that
-    drives the full DAW open path (instantiate -> prepare -> pump -> setState
-    -> createEditor -> addToDesktop -> 6 s message pump) to a clean exit for
-    both HeddleProxy and HeddleBridge, plus the core test suite.
-  - heddle-proxy.exe: 150 ms pump idle fix (1520a1b) and backoff behaviour
-    carried from 0.1.9; binary rebuilt and re-fingerprinted.
+New in this build (876c43d)
+  - FIX (bridge): the DAW-facing HeddleBridge VST3 no longer forgets the
+    module list. It saved the slot/param list as raw base64 but read it back
+    with a decoder that expects a "<bytecount>." prefix, so every restore
+    silently failed and the list looked empty on reopen (slots=0). The
+    decoder now matches the encoder; the restore result is written to the
+    crash-surviving field log (HeddleBridge\debug.log) so you can confirm
+    "restored N slots" instead of a silent slots=0.
+  - FORENSICS (proxy): the drag crash that freezes the HeddleProxy editor is
+    not yet fixed, but this build instruments every drag event so the crash
+    site is identified from the field log. Both list drag sources log
+    DRAG-START (source=discovered|learn, row, rowsInList); the route-table
+    drop zone logs DRAG-ENTER / DRAG-MOVE (throttled) / DRAG-EXIT / DROP /
+    DROP-CB-DONE; the editor timer logs a TICK-DRAG heartbeat while a drag
+    is active. The last line written before the freeze is the crash site.
+    The crash reproduces from BOTH the DISCOVERED list (large, 500+ rows)
+    and a RECEIVED ("sensor surface") element drag.
+  - INSTALLER: stable install path. The MSI now installs to
+    C:\Program Files\Heddle\ instead of C:\Program Files\Heddle_vX.Y.Z\, so
+    future upgrades no longer leave a pile of versioned folders. The
+    per-machine product UpgradeCode is unchanged - 0.1.8-0.1.12 installs
+    upgrade in place; the old Heddle_vX.Y.Z folder is left behind and can
+    be deleted after the upgrade.
 
 Earlier (v0.1.9, ed4051e): vector route table + editor UI (continuous #
 index, tN column, +20% fonts, 3x taller surfaces) + NULL-deref crash fix.
@@ -89,20 +93,20 @@ Integrity (sha256 / md5 / size; verify with
   sha256sum <file>                   (macOS/Linux/Git-Bash))
   NOTE: the .vst3 fingerprints below are of the inner x86_64-win module exe
   (the file a DAW actually loads), not the whole bundle directory.
-  heddle-host.exe        cdd42cbb2a931d0f4dc662703382d72571d13d6d081c7c36a9253c845c44aa5b
-                         md5 679203fed9d2999f9024036191080ae9   (3,539,968 bytes)
-  heddle-render.exe      187e879ce5a0b65f5e951b37f8fa9bd9aa410eb23b495b08231932c57bda046a
-                         md5 0e6e79631fc129c0aa7a63f97bf1129a   (4,219,392 bytes)
+  heddle-host.exe        2410f25a9943194f1be8584e23b0589a2d1b67bc87344219b666a7cf1c16bf22
+                         md5 b516345f5f0935ac8c446f52522a99ed   (3,539,968 bytes)
+  heddle-render.exe      60433b3ee458a4e0d77c2ecaf5e18acc05346760b5aa0e9371893aed5e901501
+                         md5 3715b200a47e6e2e2b10b622f36f9ca2   (4,219,392 bytes)
   heddle-proxy.exe       1903ef26e8db0acab5757ab78b0b4af8ac3fcf53bbd24973cb24306a215866b3
-                         md5 c7ced598517d1810865e6030405227ed   (195,072 bytes)
-  HeddleProxy.vst3       8a02efb8438587ca5c0536e67995cff4ce5c909fad0eb8d8f68723cdc824219b
-                         md5 e264e496f683fb29136e78fdca8c856b   (3,340,288 bytes)
-  HeddleSmokePlugin.vst3 3e44ffb4fedcd53a5da4f51944b2acdcffc7a5cc8483f4c154fbc963b1e24c6d
-                         md5 d9e2e298fda360d2169cffc849b1db82   (3,021,824 bytes)
-  HeddleBridge.vst3      8da6c098b137d3762cc39649fbf9edb3951b8273f123ea7408469ca6640e50ce
-                         md5 e6c68690539e7f914dcc527d0ffbbc4f   (3,537,920 bytes)
-  HeddleProbeAudio.vst3  8ec6155903079b45fc5478dccae2123cc021b6e22f8346e7066a5f9115db8083
-                         md5 fe1d39df58ddbc6658a5059560d295b6   (47,616 bytes)
+                         md5 c7ced598517d1810865e6030405227ed   (195,072 bytes)  [unchanged in 0.1.13]
+  HeddleProxy.vst3       36aafc3cce1381d8efcc9aeca26bde66fb559fbfa5de3ab3b3e18f276c6839e4
+                         md5 361a1165009e008d8accd619d0fde33b   (3,347,968 bytes)
+  HeddleSmokePlugin.vst3 14c9efffe9393346e12ef19a9da0f66c53f398bcb6a29f7d31ddb291f08dfd81
+                         md5 b1a230e3841c934d460b73547ce0f737   (3,021,824 bytes)
+  HeddleBridge.vst3      c3c57a152b2c3ea8c6e393f54a5ad2aac1cd15b551ef6442fa9765c0033fcf31
+                         md5 516da78ab939042fd650053989298573   (3,542,016 bytes)
+  HeddleProbeAudio.vst3  3c24734f8d1776f46d5b4950eeb8cc093a15b51ffacdbb51ab9ef8f6bfe5bb29
+                         md5 5a636311ee1c9ee4c46a76093f30fec6   (47,616 bytes)
   LICENSE                617310cac2e15d9033e4fb0b9b42af4b7616bd6b7209d5b31c61bc4c181eac6b
                          md5 44447db2f3bfc0ba6a0ef45f9a2730c7   (39,210 bytes)
   heddle-0.1.13-win-x64.msi   hash in the delivery message (a file cannot carry its own hash;

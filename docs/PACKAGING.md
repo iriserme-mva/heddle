@@ -2,7 +2,7 @@
 
 How Heddle release artifacts are built, what goes where, and — critically —
 how they get to the user given provider policy. This is the baseline as of
-v0.1.12 (2026-11-03); everything here is reproducible via
+v0.1.13 (2026-11-21); everything here is reproducible via
 `scripts/build_package.ps1`.
 
 ## Windows package (implemented, `scripts/build_package.ps1`)
@@ -26,7 +26,8 @@ Staged payload (`dist/`):
 Per-machine, **true 64-bit** package (UAC elevation on install is normal for
 Program Files; uninstall via Settings › Apps › Heddle):
 
-- Install dir `C:\Program Files\Heddle_v0.1.8\` (editable in the UI),
+- Install dir `C:\Program Files\Heddle\` (stable path since v0.1.13; was
+  `Heddle_vX.Y.Z\` before - editable in the UI),
   `bin\` with the three executables (x64) + `LICENSE`, `README.txt`
 - **Plugin directory configurable at install time** (its own line in the
   Install Directory page, property `VST3PLUGINSDIR`, default
@@ -34,7 +35,7 @@ Program Files; uninstall via Settings › Apps › Heddle):
   machine-wide VST3 discovery folder). Users with their own VST3 path type
   it there (relative to `C:\`, e.g. `Program Files\Steinberg\VST3`). All four
   `<Name>.vst3` bundles land in the chosen dir, so no DAW configuration is needed.
-- **Start › All Programs › Heddle_v0.1.8** › Heddle Host / Heddle Render /
+- **Start › All Programs › Heddle** › Heddle Host / Heddle Render /
   Heddle Proxy (shortcuts key on an HKCU registry value per ICE43)
 
 Build: `candle.exe -arch x64 -dHEDDLE_SRC="<dist>" installer\heddle.msi.wxs`

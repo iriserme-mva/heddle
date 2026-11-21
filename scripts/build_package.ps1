@@ -10,9 +10,10 @@
 #                   HeddleProbeAudio.vst3   (full .vst3 bundles)
 #        LICENSE, README.txt
 #   2. Builds dist\heddle-<ver>-win-x64.msi via WiX 3.14 (candle -arch x64 + light),
-#      per-machine install:  C:\Program Files\Heddle_v<ver>\  (true 64-bit package)
+#      per-machine install:  C:\Program Files\Heddle\  (true 64-bit package;
+#      stable path since v0.1.13, was Heddle_v<ver>\ before)
 #      + C:\Program Files\Common Files\VST3\  (machine-wide VST3 discovery folder)
-#      + Start menu  >  Heddle_v<ver>  >  Heddle Host / Render / Proxy.
+#      + Start menu  >  Heddle  >  Heddle Host / Render / Proxy.
 #      NOTE: .wxs must use ProgramFiles64Folder (NOT ProgramFilesFolder, which is
 #      always the 32-bit "Program Files" inside a 64-bit package — that mismatch
 #      is what ICE80 flags).
