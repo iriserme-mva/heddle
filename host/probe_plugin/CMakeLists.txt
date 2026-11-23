@@ -65,6 +65,11 @@ if(WIN32)
         WIN32_LEAN_AND_MEAN
         NOMINMAX)
 endif()
+# PE version resource (Details tab): stamp the probe DLL like the host/proxy
+# exes. Bare OriginalFilename (it's a .dll packed into HeddleProbeAudio.vst3).
+if(WIN32)
+    heddle_stamp_version(HeddleProbeAudio)
+endif()
 
 # Post-build: lay the DLL out as a VST3 bundle so the JUCE host can discover
 # it. Mirrors the smoke plugin's artefact layout:

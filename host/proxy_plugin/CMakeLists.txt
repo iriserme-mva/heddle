@@ -18,7 +18,7 @@ juce_add_plugin(heddle_proxy_plugin
     COMPANY_COPYRIGHT "Copyright (c) 2026 Heddle"
     BUNDLE_ID "com.heddle.proxy"
     PLUGIN_CODE "HdPr"
-    VERSION "1.0.0"
+    VERSION "0.1.14"
     # VST3_AUTO_MANIFEST FALSE: juce_vst3_helper crashes on the CI images
     # (JUCE 8.0.4); the smoke host discovers VST3s via direct factory
     # enumeration when moduleinfo.json is absent. Matches test_plugin.

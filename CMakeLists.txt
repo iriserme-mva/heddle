@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(heddle_core VERSION 0.1.13 LANGUAGES C CXX)
+project(heddle_core VERSION 0.1.14 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -62,6 +62,32 @@ target_link_libraries(heddle_ring_latency PRIVATE heddle_core)
 add_executable(heddle_osc_perf core/tools/osc_perf.cpp)
 target_link_libraries(heddle_osc_perf PRIVATE heddle_core)
 
+# PE version resource: one shared .rc.in, configured per-target with its own
+# InternalName/OriginalFilename (configure_file per target, since the two
+# values differ). Windows "Details" tab shows Heddle version instead of
+# "Version 1.0.0.0". Only MSVC/Windows builds compile it in (WIN32).
+if(WIN32)
+  set(HEDDLE_VRC_VERSION "${PROJECT_VERSION}")
+  set(HEDDLE_VRC_MAJOR   "${PROJECT_VERSION_MAJOR}")
+  set(HEDDLE_VRC_MINOR   "${PROJECT_VERSION_MINOR}")
+  set(HEDDLE_VRC_PATCH   "${PROJECT_VERSION_PATCH}")
+  function(heddle_stamp_version target)
+    set(HEDDLE_INTERNAL_NAME ${target})
+    # OUTPUT_NAME is only set explicitly on heddle-proxy (value == target name);
+    # the other targets default to their target name. Use get_target_property but
+    # guard against the "OUTPUT_NAME-NOTFOUND" literal CMake returns for an unset
+    # property, falling back to the target name in both cases.
+    get_target_property(_hvn ${target} OUTPUT_NAME)
+    if(NOT _hvn OR _hvn STREQUAL "OUTPUT_NAME-NOTFOUND")
+      set(_hvn ${target})
+    endif()
+    set(HEDDLE_OUTPUT_NAME ${_hvn})
+    configure_file(${CMAKE_SOURCE_DIR}/version.rc.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/${target}.version.rc @ONLY)
+    target_sources(${target} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/${target}.version.rc)
+  endfunction()
+endif()
+
 # ---- heddle-proxy (standalone OSC fan-out router) ---------------------------
 # Core-layer (JUCE-free): routes one OSC surface to any number of Heddle targets.
 # The passthrough VST3 form lives in host/ and reuses the same ProxyEngine.
@@ -69,6 +95,9 @@ target_link_libraries(heddle_osc_perf PRIVATE heddle_core)
 add_executable(heddle-proxy core/tools/proxy_main.cpp)
 target_link_libraries(heddle-proxy PRIVATE heddle_core)
 set_target_properties(heddle-proxy PROPERTIES OUTPUT_NAME heddle-proxy)
+if(WIN32)
+  heddle_stamp_version(heddle-proxy)
+endif()
 
 # ---- heddle-osc-send (test connector) --------------------------------------
 # Emulates a control surface (TouchOSC etc.): sends bare OSC 1.0 (no length

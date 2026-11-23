@@ -3,6 +3,57 @@
 Updated by whoever works on the project (human or agent). **Keep this file
 current after every session** — last section first.
 
+## 0.1.14 field-test fixes: drag crash/hang + version Details + remember-paths (2026-11-22)
+
+- 🔨 **Bridge drag crash/hang hardening** (`host/heddle_bridge/bridge.cpp`).
+  Field test (user, 4 repros): crash on drag-enter into the list, crash
+  releasing mid-drag, crash on drag-start, and — the new one — first drop
+  works, second drop **hangs**. Root-cause confirmed against the build-tree
+  JUCE 8.0.4 fork: `ComponentPeer` drives `FileDragAndDropTarget` callbacks
+  from the OLE `IDropTarget` (`FileDropTarget::DragEnter/DragOver/DragLeave`
+  → `handleDragMove`; `Drop` → `handleDragDrop`) with **no try/catch** —
+  enter/exit/move run *inside* the OLE COM callback, `filesDropped` on the
+  message thread via `callAsync`. An exception escaping any of them goes
+  straight into OLE COM dispatch → fatal on most DAWs, wedged drag manager
+  (next drag never completes = the "works twice then hangs") on others.
+  Fix: every `FileDragAndDropTarget` override is now exception-proof
+  (`try`/`catch` in each, `isInterestedInFileDrag` returns false on throw)
+  and every phase is trace-logged to the same field-forensics `debug.log`
+  (`drag enter/exit/drop/drop done`), so the next hang self-reports which
+  phase it is stuck in (a `drop ...` line with no `drop done` = the hang is
+  inside a per-file handler). Rebuild into `HeddleBridge.vst3` in progress.
+  Crash logs from the user still not received — this hardening + the new
+  trace is the non-guess mitigation; the log will pin the exact phase next
+  time.
+- 🔨 **Version metainfo in the binaries** (re-opened — field test disproved
+  the earlier "done"). Root cause found: the field-tested 0.1.14 MSI
+  (built 2026-11-21 22:07) packaged `build-msvc-perf2/host/Release/heddle-host.exe`
+  from **13:40**, which *predates* `version.rc.in` (created 15:56) and the
+  `heddle_stamp_version()` wiring (root `CMakeLists.txt` `heddle-proxy`;
+  `host/CMakeLists.txt` `heddle-host`/`heddle-render` — all **working-tree
+  only, never committed**). No `.version.rc` exists anywhere in the build
+  tree (configure never ran the stamp). Raw byte-scan of the packaged exe:
+  `VS_VERSION_INFO` **ABSENT**, no `0.1.14` string. So the stamping source is
+  correct; the build was just never re-run. A reconfigure+rebuild (in
+  progress) compiles the stamp into all three EXEs → Details tab will show
+  0.1.14. `version.rc.in` + the CMakeLists stamp edits still need committing.
+- 🔨 **Remember-paths (installer pre-fill)** — real root cause is worse than
+  "uninstall deletes it": the paths were written as **component-owned**
+  registry rows (`cmpMenu`, keypath `HKCU\Software\Heddle`) → committed in the
+  **MSI service (SYSTEM) hive**, but `RegistrySearch` (AppSearch) reads the
+  **installing user's** HKCU. Hive mismatch ⇒ it *never* pre-filled, even
+  before any uninstall. Fix: an **immediate** VBScript custom action
+  (`installer/HeddleRememberPaths.vbs` → `HeddleRememberPaths`) writes
+  `HKCU\Software\Heddle\Remembered\InstallDir|Vst3Dir` in the **user** context
+  (immediate action = user hive, before `InstallFinalize` per ICE77), to a key
+  no component owns (uninstall leaves it); `RegistrySearch` now reads that same
+  key, so the next install's `RegistrySearch` (user hive) finds it. `.wxs`
+  recompiled clean (candle+light exit 0, ICE77 resolved). MSI rebuild pending
+  the fresh binaries.
+- 📅 Rebuild (reconfigure + host/render/proxy EXEs + bridge VST3) → repackage
+  MSI → deliver (email, non-`.msi` entry) → IMAP-verify. Then commit the
+  working-tree changes (bridge.cpp, CMakeLists ×N, wxs, vbs, version.rc.in).
+
 ## Proxy targets: unbounded (2026-11-01)
 
 - ✅ **Removed the 5-target cap** (user: "a normal setup is hundreds").

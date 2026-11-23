@@ -123,6 +123,9 @@ target_include_directories(heddle-render PRIVATE ${HEDDLE_VST3_SDK_INCLUDE})
 if(WIN32)
     target_link_libraries(heddle-render PRIVATE ws2_32 winmm)
 endif()
+if(WIN32)
+    heddle_stamp_version(heddle-render)
+endif()
 
 # ---- heddle-host (the standalone live host) ---------------------------------
 # heddle-host <chain.json> [--audio null|system] [--device NAME]
@@ -165,6 +168,9 @@ target_include_directories(heddle-host PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_include_directories(heddle-host PRIVATE ${HEDDLE_VST3_SDK_INCLUDE})
 if(WIN32)
     target_link_libraries(heddle-host PRIVATE ws2_32 winmm)
+endif()
+if(WIN32)
+    heddle_stamp_version(heddle-host)
 endif()
 
 # ---- heddle-bridge-test (t5 bridge round-trip, headless) ----------------------

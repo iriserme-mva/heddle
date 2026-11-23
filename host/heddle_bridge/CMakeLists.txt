@@ -18,7 +18,7 @@ juce_add_plugin(heddle_bridge_plugin
     COMPANY_COPYRIGHT "Copyright (c) 2026 Heddle"
     BUNDLE_ID "com.heddle.bridge"
     PLUGIN_CODE "WftB"
-    VERSION "1.0.0"
+    VERSION "0.1.14"
     # Same crash as the smoke plugin (juce_vst3_helper 0xC0000005/SIGSEGV on
     # CI with JUCE 8.0.4). HeddleBridge is a manual/DAW plugin, so moduleinfo
     # scanning is not required.

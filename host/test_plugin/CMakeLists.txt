@@ -14,7 +14,7 @@ juce_add_plugin(heddle_smoke_plugin
     COMPANY_COPYRIGHT "Copyright (c) 2026 Heddle"
     BUNDLE_ID "com.heddle.smokeplugin"
     PLUGIN_CODE "WftS"
-    VERSION "1.0.0"
+    VERSION "0.1.14"
     # juce_vst3_helper (writes moduleinfo.json post-build) crashes on the CI
     # images (Windows 0xC0000005 / macOS SIGSEGV) with JUCE 8.0.4. The smoke
     # host discovers VST3s via direct factory enumeration when moduleinfo.json

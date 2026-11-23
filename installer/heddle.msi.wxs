@@ -36,13 +36,13 @@
 
   <Product Id="*"
            Name="Heddle"
-           Version="0.1.13.0"
+           Version="0.1.14.0"
            Manufacturer="iriserme-mva"
            Language="1033"
            UpgradeCode="7A1B6E52-9C3F-4D2A-B4E1-6F0D5C8A3E91">
 
     <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine"
-             Description="Heddle 0.1.13 - audio chain host, offline renderer, OSC proxy and VST3 plugins"
+             Description="Heddle 0.1.14 - audio chain host, offline renderer, OSC proxy and VST3 plugins"
              Comments="Personal / non-commercial use. Licence: see LICENSE in the install folder."/>
 
     <MediaTemplate EmbedCab="yes"/>
@@ -52,6 +52,13 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of Heddle is already installed."/>
 
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR"/>
+
+    <!-- License agreement dialog (0.1.14): WiX's stock WixUI_InstallDir flow
+         opens LicenseAgreementDlg between WelcomeDlg and the directory dialog
+         IFF WixUILicenseRtf is set (the stock UI fragment conditions its
+         Next/Back routing on it). Source is relative to the .wxs file
+         (installer\), not the staged dist, like HeddleRememberPaths.vbs. -->
+    <Property Id="WixUILicenseRtf" Value="$(var.HEDDLE_SRC)\..\installer\HeddleLicense.rtf"/>
 
     <!-- Editable VST3 plugin location. Default = the machine-wide VST3
          discovery folder (C:\Program Files\Common Files\VST3). The user can
@@ -77,6 +84,69 @@
            _BrowseProperty, so with _BrowseProperty=VST3PLUGINSDIR it can
            not clobber the install directory). -->
     <Property Id="VST3PLUGINSDIR" Value="VST3DIR"/>
+
+    <!-- Remember the last install + VST3 paths across reinstalls/upgrades
+         (0.1.14). READ side: the two RegistrySearch locators below generate
+         an AppSearch action (runs early in BOTH the UI and execute sequences)
+         that reads HKCU\Software\Heddle\Remembered into PREV_INSTALLDIR /
+         PREV_VST3DIR, and the SetDirectory actions re-root INSTALLDIR / VST3DIR
+         to them - so the install-dir dialog pre-fills the user's previous
+         locations instead of resetting to the Program Files defaults. On
+         first install the props are unset, the SetDirectory condition (the
+         element body text) evaluates false, both are skipped, and the static
+         defaults apply. WRITE side: an install-time IMMEDIATE custom action
+         (HeddleRememberPaths, further down) writes the key. The key is owned
+         by NO MSI component, so uninstall never deletes it - that ownership
+         was the 0.1.14 bug (component-owned rows under Software\Heddle were
+         removed on uninstall, resetting every reinstall to the defaults).
+         NOTE: RegistrySearch has no Property attribute in WiX 3.14 - the found
+         value is assigned to the ENCLOSING <Property> (confirmed against
+         wix3.xsd; see the read_a_registry_entry how-to). SetDirectory Value is
+         Formatted, so [PREV_*] expands at action time (no Error1314 trap). -->
+    <!-- 0.1.14 remember-paths fix: read from a SEPARATE key
+         (Software\Heddle\Remembered) that NO MSI component owns. The values
+         used to live as component-owned rows under Software\Heddle (written by
+         cmpMenu), so the uninstall removed them and every reinstall fell back
+         to the Program Files defaults. Now an install-time IMMEDIATE custom
+         action (HeddleRememberPaths, below; sequenced just before
+         InstallFinalize, see the write-side comment) writes them to this
+         non-owned key in the installing user's HKCU; because it is not an
+         MSI-owned registry row, the uninstall never touches it, so the next
+         install's RegistrySearch finds them and pre-fills the two installer
+         fields. -->
+    <Property Id="PREV_INSTALLDIR">
+      <RegistrySearch Id="HeddlePrevInstallDir" Root="HKCU" Key="Software\Heddle\Remembered"
+                      Name="InstallDir" Type="raw"/>
+    </Property>
+    <Property Id="PREV_VST3DIR">
+      <RegistrySearch Id="HeddlePrevVst3Dir" Root="HKCU" Key="Software\Heddle\Remembered"
+                      Name="Vst3Dir" Type="raw"/>
+    </Property>
+
+    <SetDirectory Id="INSTALLDIR" Value="[PREV_INSTALLDIR]">PREV_INSTALLDIR</SetDirectory>
+    <SetDirectory Id="VST3DIR" Value="[PREV_VST3DIR]">PREV_VST3DIR</SetDirectory>
+
+    <!-- Remember-paths WRITE side (0.1.14). An immediate VBScript custom
+         action writes the final INSTALLDIR / VST3DIR to the non-owned
+         HKCU\Software\Heddle\Remembered key (see HeddleRememberPaths.vbs,
+         embedded in cmpDocs). The VBS function name MUST match the CustomAction
+         Id. ICE77 forces script custom actions to sit between
+         InstallInitialize and InstallFinalize, so this is IMMEDIATE and is
+         sequenced just before InstallFinalize: by then the SetDirectory
+         pre-fill + the user's dialog edits have all committed to INSTALLDIR /
+         VST3DIR, so the properties read here are final. Because no MSI
+         component owns the Remembered key, uninstall leaves it, and the next
+         install's RegistrySearch (above) pre-fills the fields. Return=ignore:
+         a remember failure must never abort a good install. -->
+    <CustomAction Id="HeddleRememberPaths"
+                  FileKey="HeddleRememberPathsVbs"
+                  VBScriptCall="HeddleRememberPaths"
+                  Execute="immediate"
+                  Return="ignore"/>
+
+    <InstallExecuteSequence>
+      <Custom Action="HeddleRememberPaths" Before="InstallFinalize">NOT Installed</Custom>
+    </InstallExecuteSequence>
 
     <UIRef Id="WixUI_InstallDir"/>
 
@@ -172,6 +242,10 @@
             <File Id="fLicense" Source="$(var.HEDDLE_SRC)\LICENSE"
                   KeyPath="yes" Checksum="yes"/>
             <File Id="fReadme" Source="$(var.HEDDLE_SRC)\README.txt"/>
+            <!-- VBScript for the remember-paths custom action (FileKey
+                 HeddleRememberPathsVbs). Source is relative to the .wxs file
+                 (installer\), not the staged dist. -->
+            <File Id="HeddleRememberPathsVbs" Source="$(var.HEDDLE_SRC)\..\installer\HeddleRememberPaths.vbs"/>
             <RemoveFolder Id="CleanBinDir" Directory="BINDIR" On="uninstall"/>
           </Component>
         </Directory>
@@ -239,7 +313,7 @@
             <!-- ICE43: a non-advertised shortcut component must key on an
                  HKCU registry key, not a file. -->
             <RegistryKey Root="HKCU" Key="Software\Heddle">
-              <RegistryValue Name="InstalledVersion" Type="string" Value="0.1.13"/>
+              <RegistryValue Name="InstalledVersion" Type="string" Value="0.1.14"/>
             </RegistryKey>
             <Shortcut Id="MenuHost" Name="Heddle Host"
                       Target="[BINDIR]heddle-host.exe"

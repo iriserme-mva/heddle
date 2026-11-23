@@ -301,6 +301,19 @@ public:
         const auto& e = entries_[row];
         return dragVarDiscovered(e.targetIdx, e.p.slot, e.p.param);
     }
+    // KEEP THE DRAG IMAGE A CHILD OF THE EDITOR — never let JUCE promote it to a
+    // desktop (top-level) window. With the base-class default (true),
+    // startDragging() calls dragImageComponent->addToDesktop(windowIgnoresMouseClicks
+    // | windowIsTemporary), which spawns a brand-new semi-transparent always-on-top
+    // Win32 window INSIDE the DAW process for every row drag; its creation / per-move
+    // repaints / destruction during a drag are what crashes Ableton (repro: drag a row,
+    // it "flies back" on a failed drop, then the process dies ~200ms later). DAWs are
+    // hostile to new top-level windows appearing under their own window. Returning
+    // false routes startDragging() to addChildComponent() instead: the drag image is a
+    // normal child of the ProxyEditor, and in-editor hit-testing (findTarget ->
+    // getComponentAt -> parent walk) still resolves RouteTable for the drop. We never
+    // drag to other windows, so nothing is lost.
+    bool mayDragToExternalWindows() const override { return false; }
     // JUCE 8.0.4 ListBoxModel has no begin/endUpdate; repaint() alone does NOT
     // refresh the ListBox's cached row count, so use updateContent().
     void refresh(const std::vector<Entry>& e, juce::ListBox* list) {
@@ -358,6 +371,10 @@ public:
         const auto& e = entries_[row];
         return dragVarReceived(e.addr, e.numFloats);
     }
+    // Same DAW-safety guard as DiscoveredModel: keep the drag image a child of the
+    // editor (never a desktop top-level window). See the comment there for the full
+    // root cause (addToDesktop in-process Win32 window kills Ableton mid-drag).
+    bool mayDragToExternalWindows() const override { return false; }
     void refresh(const std::vector<RecentMsg>& rec, juce::ListBox* list) {
         list_ = list;
         const int before = (int) entries_.size();
@@ -958,6 +975,25 @@ public:
         applyLock();
         refreshStatus();
         resized();  // layout now that all children exist (first setSize skipped it)
+    }
+
+    // ---- DragAndDropContainer lifecycle (0.1.14 drag-crash fix) -----------
+    // The editor is the DragAndDropContainer. These two hooks let the field log
+    // show the FULL drag lifecycle: DRAG-START (from the list model) ->
+    // DRAG-OP-START (here) -> DRAG-ENTER/DROP or DRAG-EXIT -> DRAG-OP-END (here).
+    // Before 0.1.14 the log always died at DRAG-START because JUCE promoted the
+    // drag image to a desktop top-level window (mayDragToExternalWindows()==true),
+    // which crashes Ableton. Now the drag image is a child, so a successful test
+    // must log DRAG-OP-START and then DRAG-OP-END cleanly.
+    void dragOperationStarted(
+        const juce::DragAndDropTarget::SourceDetails& s) override {
+        fieldLog("DRAG-OP-START (container, drag image = child) desc=" +
+                 (s.description.isString() ? s.description.toString() : "<var>"));
+    }
+    void dragOperationEnded(
+        const juce::DragAndDropTarget::SourceDetails& s) override {
+        fieldLog("DRAG-OP-END (container teardown clean) desc=" +
+                 (s.description.isString() ? s.description.toString() : "<var>"));
     }
 
     // #6 global lock: ON makes every field read-only and rejects drag drops,

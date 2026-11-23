@@ -1,0 +1,37 @@
+// Heddle PE version resource — generated from version.rc.in by
+// configure_file() (CMAKE_PROJECT_VERSION). Windows "Details" tab of the
+// host / render / proxy executables and the probe plugin DLL. The JUCE
+// VST3 plugins report their version through the VST3 SDK (juce_add_plugin
+// VERSION); they do NOT carry a PE VS_VERSION_INFO (PowerShell VersionInfo
+// reads "1.0.0" on them — that is the JUCE client default, not a bug). Do
+// NOT add this .rc to those targets.
+#include <winver.h>
+
+VS_VERSION_INFO VERSIONINFO
+  FILEVERSION     @HEDDLE_VRC_MAJOR@,@HEDDLE_VRC_MINOR@,@HEDDLE_VRC_PATCH@,0
+  PRODUCTVERSION  @HEDDLE_VRC_MAJOR@,@HEDDLE_VRC_MINOR@,@HEDDLE_VRC_PATCH@,0
+  FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+  FILEFLAGS       0x0L
+  FILEOS          VOS_NT_WINDOWS32
+  FILETYPE        VFT_APP
+  FILESUBTYPE     VFT2_UNKNOWN
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName",      "Mykhailo (MV) - iriserme-mva" 0
+      VALUE "FileDescription",  "Heddle - audio chain host / offline renderer / OSC router" 0
+      VALUE "FileVersion",      "@HEDDLE_VRC_VERSION@" 0
+      VALUE "InternalName",     "@HEDDLE_INTERNAL_NAME@" 0
+      VALUE "LegalCopyright",   "Copyright (c) 2026 Mykhailo (MV). Licence: see LICENSE." 0
+      VALUE "OriginalFilename", "@HEDDLE_OUTPUT_NAME@" 0
+      VALUE "ProductName",      "Heddle" 0
+      VALUE "ProductVersion",   "@HEDDLE_VRC_VERSION@" 0
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+END

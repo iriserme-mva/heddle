@@ -792,35 +792,74 @@ public:
     }
 
     // ---- FileDragAndDropTarget ------------------------------------------
-    bool isInterestedInFileDrag(const juce::StringArray& files) override {
-        for (const juce::String& f : files) {
-            const juce::String ext = juce::File(f).getFileExtension().toLowerCase();
-            if (isPluginPath(ext) || ext == ".json")
-                return true;
-        }
-        return false;
+    // JUCE drives every FileDragAndDropTarget callback from the OLE drag
+    // manager with NO try/catch in between (verified in this JUCE's
+    // juce_Windowing_windows.cpp FileDropTarget::DragEnter/DragOver/DragLeave/
+    // Drop -> ComponentPeer::handleDragMove/handleDragDrop): enter/exit/move
+    // run synchronously INSIDE the OLE COM callback, filesDropped on the
+    // message thread via callAsync. An exception escaping ANY of them goes
+    // straight into the OLE COM dispatch -- on most DAWs that is a fatal
+    // crash (the "crash on drag-enter / on release" reports), and on others
+    // it wedges the drag manager so the next drag never completes (the
+    // "works twice then hangs" report). So every override is wrapped so that
+    // no exception can ever leave the drop path, and every phase is
+    // trace-logged to the same field-forensics debug.log so the next hang
+    // self-reports exactly which phase it is stuck in (a "drop ..." line with
+    // no "drop done" = the hang is inside one of the per-file handlers).
+    void dragLog(const juce::String& phase) {
+        try {
+            BridgeSettings::file().getParentDirectory().getChildFile("debug.log")
+                .appendText(juce::String(juce::Time::currentTimeMillis())
+                            + "  drag " + phase + juce::newLine);
+        } catch (...) {}
     }
-    void fileDragEnter(const juce::StringArray&, int, int) override {
-        dragOver_ = true;
-        repaint();
+    bool isInterestedInFileDrag(const juce::StringArray& files) override {
+        try {
+            for (const juce::String& f : files) {
+                const juce::String ext = juce::File(f).getFileExtension().toLowerCase();
+                if (isPluginPath(ext) || ext == ".json")
+                    return true;
+            }
+            return false;
+        } catch (...) {
+            return false;   // never throw out of the OLE callback
+        }
+    }
+    void fileDragEnter(const juce::StringArray& files, int, int) override {
+        try {
+            dragLog("enter n=" + juce::String(files.size()));
+            dragOver_ = true;
+            repaint();
+        } catch (...) {}
     }
     void fileDragExit(const juce::StringArray&) override {
-        dragOver_ = false;
-        repaint();
+        try {
+            dragLog("exit");
+            dragOver_ = false;
+            repaint();
+        } catch (...) {}
     }
     void filesDropped(const juce::StringArray& files, int, int) override {
-        dragOver_ = false;
-        for (const juce::String& f : files) {
-            const juce::File file(f);
-            const juce::String ext = file.getFileExtension().toLowerCase();
-            if (ext == ".json") {
-                loadConfigFromFile(file);
-            } else if (isPluginPath(ext)) {
-                addSlotFromPath(file.getFullPathName());
+        try {
+            dragLog("drop n=" + juce::String(files.size()));
+            dragOver_ = false;
+            for (int i = 0; i < files.size(); ++i) {
+                const juce::File file(files[i]);
+                const juce::String ext = file.getFileExtension().toLowerCase();
+                dragLog("drop[" + juce::String(i) + "] "
+                        + (ext == ".json" ? "json" : "vst"));
+                if (ext == ".json") {
+                    loadConfigFromFile(file);
+                } else if (isPluginPath(ext)) {
+                    addSlotFromPath(file.getFullPathName());
+                }
             }
+            list_.updateContent();
+            repaint();
+            dragLog("drop done slots=" + juce::String(slots_.size()));
+        } catch (...) {
+            dragOver_ = false;   // never leave the drop-highlight state stuck
         }
-        list_.updateContent();
-        repaint();
     }
 
 private:
