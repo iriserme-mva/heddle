@@ -79,6 +79,23 @@ open its editor UI to configure routes/mapping visually (save writes the config
 JSON next to the patch).
 
 New in this build (0.1.14)
+  - FIX (proxy): drag-release crash (0.1.14b). Field log 2026-11-24 showed a
+    LEARNED-row drag dying the DAW ~250 ms after the mouse-up while a
+    DISCOVERED-row drag released clean. Root cause: JUCE only counts a mouse
+    source as "dragging" while the button is down, but the drag image lives
+    on ~320 ms after that (120 ms fade + 200 ms delete timer). Our 4 Hz
+    learn-list refresh ran on the first tick after release; with live OSC
+    traffic the learned list changed, recycling the learn rows the drag
+    teardown was still touching. Fix: freeze the learn list while
+    isDragAndDropActive() is true (drag image alive), plus a
+    "learn-refresh-DEFERRED" edge log so the next field log proves the guard
+    fired. (Discovered drags were already clean since 0.1.14.)
+  - FIX (installer): remember-paths now also runs on UPGRADE. The 0.1.14
+    remember custom action was conditioned "NOT Installed", which is false
+    on an in-place upgrade, so the HKCU\Software\Heddle\Remembered key was
+    never written after an upgrade and the next install dialog showed the
+    defaults. Now unconditional (before InstallFinalize). Verify: after this
+    upgrade, ~\Heddle\remember.log gets a new line.
   - NEW (proxy + bridge): run-marked field logging. Every debug log line now
     carries ms-epoch + wall-clock + PID, and each plugin instance writes
     RUN-START / RUN-END banners (plugin/ver/pid) at construction and
@@ -134,8 +151,8 @@ Integrity (sha256 / md5 / size; verify with
                          md5 2583f23a5c8ce11f742507294a4db68d   (4,220,416 bytes)
   heddle-proxy.exe       d6ac08311c40c17cba6f30a2b9d749c647e364f6507a36e5995121ae32b89853
                          md5 6c261bd722500cb91fa59a01a69df94f   (196,096 bytes)
-  HeddleProxy.vst3       41d8edc41976e62f958fdbdf6097d8865a458318b1cb893fcd2233d43325efd2
-                         md5 5aac70a0a7c3a589c288f2fb28581353   (3,352,064 bytes)
+  HeddleProxy.vst3       37a34b3a5e97616ebbaeffff2abdd388d4ca1e0f076fb11b6b441d736f49180e
+                         md5 2bec5d3c0be89dbfe8cb3029639899b7   (3,352,064 bytes)
   HeddleSmokePlugin.vst3 364103849378509f9a379953c7d108ac9d228879f46f1a908b58e8331353d0a6
                          md5 2816e2cf0d019fae5d696938b689d4f8   (3,021,824 bytes)
   HeddleBridge.vst3      9aa31004f031ccf0a0e9727574c851db4a89d130e2c76f599986dc12736b7c1f

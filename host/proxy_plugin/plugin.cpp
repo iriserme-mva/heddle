@@ -1126,10 +1126,22 @@ public:
         //   fix is the same: no list mutation while the button is down.)
         //   ModifierKeys::currentModifiers.isAnyMouseButtonDown() is true from
         //   the moment any button goes down until it comes up, so the learn
-        //   list is frozen for the whole press->release span and simply
-        //   refreshes on the next tick after release. (The || desktop check
-        //   is a belt-and-braces backstop that also covers an in-flight
-        //   registered drag if a button-up ever lands first.)
+        // list is frozen for the whole press->release span AND through the
+        // drag-image teardown (0.1.14b, field log doc_75129f6c).
+        //
+        // 0.1.14b lesson: the OLD gate treated a drag as "over" as soon as
+        // (anyButtonHeld && draggingSources == 0) was false. For an in-app
+        // JUCE drag, MouseInputSource::isDragging() is just
+        // "any button down" (juce_MouseInputSourceImpl.h L49-52), so the
+        // instant the button comes up BOTH read 0 while the
+        // DragImageComponent still lives ~120 ms (fadeOut) + 200 ms (delete
+        // timer, juce_DragAndDropContainer.cpp L68/L187-209). The first tick
+        // after release then ran refreshLearn(); with live traffic the
+        // learned list changes -> updateContent() recycles the learn rows
+        // the drag is still tearing down over -> process died ~250 ms after
+        // the mouse-up (no DRAG-OP-END, no RUN-END in the field log).
+        // isDragAndDropActive() is true exactly while a drag image exists,
+        // so it closes that window; refreshLearn() catches up next clean tick.
         const bool anyButtonHeld =
             juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown();
         const int draggingSources =
@@ -1137,11 +1149,12 @@ public:
         // 0.1.13 field-forensics: heartbeat during any press/drag. The drop
         // target only logs while the pointer is OVER the route table; this
         // covers the span from DRAG-START (row picked up) until the pointer
-        // enters the table, and — because it keeps ticking while the button is
-        // held — the last heartbeat logged before a crash pins which phase the
+        // enters the table, and - because it keeps ticking while the button is
+        // held - the last heartbeat logged before a crash pins which phase the
         // process died in (pre-table vs in-table vs dropped). Edge-logged on
         // the press/drag transition, then sampled every 120 ms.
-        const bool dragActive = anyButtonHeld || draggingSources > 0;
+        const bool dragActive = anyButtonHeld || draggingSources > 0 ||
+                                isDragAndDropActive();
         if (dragActive != lastDragActive_ ||
             (dragActive && juce::Time::currentTimeMillis() - lastDragHeartMs_ >= 120)) {
             if (dragActive && !lastDragActive_)
@@ -1155,8 +1168,19 @@ public:
                          + " learnRows=" + juce::String((int)learnModel_.entriesSize())
                          + " discRows=" + juce::String((int)discModel_.entriesSize()));
         }
-        if (!anyButtonHeld && draggingSources == 0)
+        // 0.1.14b: defer (never run) refreshLearn() while a drag image is
+        // alive - see the guard comment above. Edge-log the deferral so a
+        // field log shows the guard fired around a release (then
+        // DRAG-OP-END, then the deferred learn lines, in that order).
+        if (dragActive) {
+            if (!lastLearnDeferred_) {
+                lastLearnDeferred_ = true;
+                fieldLog("learn-refresh-DEFERRED drag-image alive (0.1.14b guard)");
+            }
+        } else {
+            if (lastLearnDeferred_) lastLearnDeferred_ = false;
             refreshLearn();
+        }
     }
 
     void paint(juce::Graphics& g) override {
@@ -2030,7 +2054,8 @@ private:
     std::string lastLearnSig_;
 
     // 0.1.13 drag-crash field-forensics: heartbeat state for timerCallback.
-    bool lastDragActive_ = false;   // (anyButtonHeld || dragSource>0) last tick
+    bool lastDragActive_ = false;   // (anyButtonHeld || dragSource>0 || drag active) last tick
+    bool lastLearnDeferred_ = false;  // 0.1.14b: learn-refresh deferral in progress (edge-log)
     int64_t lastDragHeartMs_ = 0;    // last heartbeat ms (throttling)
 
     // #9: last field snapshot; timerCallback re-reads only when it changes.

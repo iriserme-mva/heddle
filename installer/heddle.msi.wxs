@@ -145,7 +145,16 @@
                   Return="ignore"/>
 
     <InstallExecuteSequence>
-      <Custom Action="HeddleRememberPaths" Before="InstallFinalize">NOT Installed</Custom>
+      <!-- ICE77: script CAs must be immediate and sit before InstallFinalize.
+         CONDITION LESSON (2026-11-24, field report "install path not
+         preserved"): the old condition "NOT Installed" is TRUE ONLY on a
+         fresh install - on an in-place UPGRADE the engine sets Installed=1
+         early, so the condition is false and the CA silently never ran.
+         The user's field machine ran the 0.1.14 upgrade, the key was never
+         written, and the next dialog showed the Program Files defaults.
+         Unconditional: the CA writes the (possibly unchanged) final paths,
+         which is exactly what must be remembered after an upgrade. -->
+      <Custom Action="HeddleRememberPaths" Before="InstallFinalize">1</Custom>
     </InstallExecuteSequence>
 
     <UIRef Id="WixUI_InstallDir"/>

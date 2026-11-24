@@ -1,12 +1,12 @@
 # Bridge drag crash/hang hardening
 
-**Status:** In progress — hardening committed (`dcba74c`); run-marked logging added 2026-11-24, both VST3s rebuild clean, MSI shipped by email 2026-11-24 (commit `56f7735`); awaiting the user's field test.  
+**Status:** In progress — hardening committed (`dcba74c`); run-marked logging added 2026-11-24; **field log 2026-11-24 (`doc_75129f6c`) isolated the crash**: a *learned*-row drag released outside the table died the DAW ~250 ms after the mouse-up (no `DRAG-OP-END`, no `RUN-END`); a *discovered*-row drag in the same session released clean. Root cause: the 4 Hz learn-refresh guard treated a drag as "over" the instant the button came up, but JUCE's drag image lives on ~320 ms after that, so `refreshLearn()`→`updateContent()` recycled the learn rows mid-teardown under live traffic. Fix (0.1.14b): freeze the learn list while `isDragAndDropActive()`. 0.1.14b rebuild + MSI in flight 2026-11-24.
 **Target version:** 0.1.14  
 **Delivery:** The user has NO access to the build host — every change that needs a field test ships as a **fresh MSI via email** (see `docs/README.txt` / task 00004); never reference local build-tree artifacts as test material.  
 
 **Description:** Exception‑proof all `FileDragAndDropTarget` overrides in `host/heddle_bridge/bridge.cpp`, add trace logging for drag phases, and rebuild `HeddleBridge.vst3`. Field logs additionally showed the drag crash/hang repros are proxy-plugin in-app drags — so run banners + `HEDDLE_LOGDIR` support were added to BOTH plugins (see appendix §5–6).  
 **References:** STATUS.md entry 2026‑11‑22, currently open.  
-**Next steps:** Field test with `HEDDLE_LOGDIR=…\temp\run_v.0.1.14\logs` + `HEDDLE_LOGNAME=03d_debug.log` (the proxy's log lands at `temp\run_v.0.1.14\logs\03d_debug.log` as requested; the bridge keeps `debug.log` in the same dir), study the run-marked log, commit the logging changes, repackage MSI.
+**Next steps:** 0.1.14b rebuild (learn-refresh guard + deferral edge-log) → repackage MSI → email (field-test rule) → user repeats the SAME test: (a) drag a discovered row, release outside the table; (b) learn 1–2 rows with live traffic, drag a learned row, release outside; (c) drop a learned row ON a route row. Send back `03d_debug.log` — expected: `learn-refresh-DEFERRED` lines around each release, then `DRAG-OP-END` on every drag, clean `RUN-END`s. If it still dies, the new log pins the exact phase.
 
 ## Appendix — Code‑linked analysis (verified against working tree, 2026‑11‑24)
 
@@ -127,6 +127,56 @@ Expected field log after the next test,
 ... (test activity; last line before a kill is the crash site)
 1795600100000  2026-11-26 10:01:40  RUN-END plugin=HeddleProxy ver=0.1.14 pid=1234 editor closed (clean)
 ```
+
+### 8. Field log `doc_75129f6c` (2026-11-24, 16:40–16:46 user time) — first run-marked log, crash isolated
+
+Saved at `~\AppData\Local\hermes\profiles\mv\cache\documents\native-inputs\...\doc_75129f6c9d70_debug.log`.
+Landed from the FALLBACK path (`~\HeddleProxy\debug.log` — the DAW was started outside the
+shell that ran `setx`, so `HEDDLE_LOGDIR` was not inherited; filename `debug.log` = default).
+The new format works exactly as designed: epoch + wall-clock + PID, RUN-START banners.
+
+Two runs, one clean, one crash:
+
+| Run | pid | drag | outcome |
+|---|---|---|---|
+| 1 (16:41:35) | 4980 | **discovered** row 3 (ProQ3 Band 1 Gain), released outside the table | `DRAG-OP-START` 16:41:43.123 → 20 heartbeats → **`DRAG-OP-END (container teardown clean)`** 16:41:47.891. Clean. |
+| 2 (16:46:24) | 42740 | **learn** row 1 (`/fader1`), learned 2 rows at 16:46:30–31 with live fader traffic | `DRAG-OP-START` 16:46:36.552 → 2 heartbeats → **silence**. No `DRAG-OP-END`, no `RUN-END`. Process died ≤ 16:46:37.2 (last line 37.152), i.e. **≤ ~250 ms after the mouse-up**. |
+
+Key facts from the log:
+
+1. **Discovered drags are fixed** (run 1): the 0.1.14 child-drag-image change
+   (`mayDragToExternalWindows()==false`, plugin.cpp L359) survives release-and-snapback.
+2. **The crash is learn-list specific and release-specific** (run 2):
+   - only the SECOND run crashed; the user released the item (his words: "crashing once
+     releasing dragged item");
+   - the learn list was live: `learn-rebuild rows 0->1`, `1->2` a few seconds before,
+     and live OSC traffic keeps `recent()` changing → `refreshLearn()` rebuilds on any
+     signature change;
+   - run 1's learn list had **0 rows** — `refreshLearn()` had nothing to rebuild.
+3. **Root cause (code-linked)**: JUCE counts a source as "dragging" only while the
+   button is down — `MouseInputSource::isDragging()` is literally
+   `buttonState.isAnyMouseButtonDown()`
+   (`juce_gui_basics/detail/juce_MouseInputSourceImpl.h` L49-52; fed by
+   `Desktop::getNumDraggingMouseSources()` via `MouseInputSourceList.h` L93-98).
+   But `DragImageComponent` outlives the mouse-up: `mouseUp()` (juce_DragAndDropContainer.cpp
+   L100-131) starts a 120 ms fade (`dismissWithAnimation` L380-399) and a 200 ms
+   `timerCallback` (L187-209) that `deleteSelf()`s the image → the dtor (L75-89) fires
+   `dragOperationEnded` (our `DRAG-OP-END` log) only then. Our 4 Hz tick's guard was
+   `if (!anyButtonHeld && draggingSources == 0) refreshLearn();` — both terms are TRUE
+   on the first tick after release, while the drag image is still alive. With live
+   traffic the signature changes → `learnModel_.refresh()` → `list->updateContent()`
+   recycles the very learn rows the drag image teardown touches → process death ~250 ms
+   after release. Matches run 2 exactly and explains why run 1 (empty learn list) was clean.
+4. **Fix (0.1.14b, this commit)**: guard becomes `dragActive = anyButtonHeld ||
+   draggingSources > 0 || isDragAndDropActive()`; `isDragAndDropActive()` (juce_DragAndDropContainer.cpp
+   L520-523) is true exactly while a drag image exists, so the learn list is frozen
+   through the whole teardown and `refreshLearn()` runs on the next clean tick. Plus an
+   edge-log `learn-refresh-DEFERRED drag-image alive (0.1.14b guard)` so the next field
+   log proves the guard fired around each release.
+
+Note: this log also confirms the DAW inherits env vars only when LAUNCHED from the shell
+that sets them — the README procedure already covers it, but the fallback path worked and
+is fine for forensics.
 
 ### 7. Remaining verification
 
