@@ -261,6 +261,28 @@ current after every session** — last section first.
 
 ## Log
 
+- **2026-11-24** — **Run-marked field logging (0.1.14) + MSI shipped. Committed `56f7735`, CI pending.**
+  Both plugins (bridge + proxy) now: honor `HEDDLE_LOGDIR` (proxy filename
+  also honors `HEDDLE_LOGNAME`, default `debug.log`), add wall-clock + PID
+  to every debug line, and write `RUN-START`/`RUN-END` banners (plugin/ver/pid)
+  from processor AND editor ctor/dtor — a `RUN-START` without a matching
+  `RUN-END` = the DAW instance that was killed; the last line inside it is
+  the crash site. Field-test target file: `temp\run_v.0.1.14\logs\03d_debug.log`
+  (user-requested name; the harness sets `HEDDLE_LOGNAME=03d_debug.log`).
+  Studied the user's 8 field logs (11-21→11-23): `doc_9c71f` = 3×
+  `DRAG-OP-START`, 0× `DRAG-OP-END` (hang signature); `doc_1362b` = fully
+  green; full table in `tasks/00001_bridge_drag_crash_fix.md` appendix §5.
+  Build: both VST3s green 12:40 (build-msvc-perf2 Release). Packaging:
+  fresh MSI (`865C26FC6A5C`) → plain 7z (entry `heddle-0.1.14-setup-x64`)
+  → email with probe IMAP-verified + SENT_OK (user: neworldemancer@gmail.com).
+  **Standing rule (user, 2026-11-24): no host access → every field-testable
+  change ships as a fresh MSI by email** (STATUS convention #13,
+  docs/README.txt "Testing this build"). Build pitfall fixed: JUCE defines
+  `WIN32_LEAN_AND_MEAN` around its own `<windows.h>`, so `GetCurrentProcessId`
+  is undeclared in a TU after `JuceHeader.h` — fixed via top-of-file
+  `<windows.h>` include (proxy) / `<tlhelp32.h>` chain (bridge).
+  Tasks tracker created (`tasks/` + `tasks/done/`, one MD per task).
+
 - **2026-10-25** — **Proxy per-route value mapping + RECEIVED learn list. Committed `472925d`, CI GREEN (run 40152029920, all 6 jobs).**
   (a) *Per-route value mapping*: `ProxyCurve` (identity/exp/invexp/scurve +
   `linear` alias at enum index 1) in `proxy.hpp`; `ProxyRoute` gains `arg`

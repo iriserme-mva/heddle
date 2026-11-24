@@ -1,6 +1,6 @@
 # Bridge drag crash/hang hardening
 
-**Status:** In progress — hardening committed (`dcba74c`); run-marked logging added 2026-11-24, **both VST3s rebuild clean** (bridge + proxy, build-msvc-perf2 Release, 2026-11-24 12:35); awaiting field test. Uncommitted.  
+**Status:** In progress — hardening committed (`dcba74c`); run-marked logging added 2026-11-24, both VST3s rebuild clean, MSI shipped by email 2026-11-24 (commit `56f7735`); awaiting the user's field test.  
 **Target version:** 0.1.14  
 **Delivery:** The user has NO access to the build host — every change that needs a field test ships as a **fresh MSI via email** (see `docs/README.txt` / task 00004); never reference local build-tree artifacts as test material.  
 
