@@ -16,15 +16,31 @@ current after every session** — last section first.
   message thread via `callAsync`. An exception escaping any of them goes
   straight into OLE COM dispatch → fatal on most DAWs, wedged drag manager
   (next drag never completes = the "works twice then hangs") on others.
-  Fix: every `FileDragAndDropTarget` override is now exception-proof
-  (`try`/`catch` in each, `isInterestedInFileDrag` returns false on throw)
-  and every phase is trace-logged to the same field-forensics `debug.log`
-  (`drag enter/exit/drop/drop done`), so the next hang self-reports which
-  phase it is stuck in (a `drop ...` line with no `drop done` = the hang is
-  inside a per-file handler). Rebuild into `HeddleBridge.vst3` in progress.
-  Crash logs from the user still not received — this hardening + the new
-  trace is the non-guess mitigation; the log will pin the exact phase next
-  time.
+  Fix (committed `dcba74c`): every `FileDragAndDropTarget` override is
+  exception-proof (`try`/`catch` in each, `isInterestedInFileDrag` returns
+  false on throw) and every phase is trace-logged to the same field-forensics
+  `debug.log` (`drag enter/exit/drop/drop done`), so the next hang
+  self-reports which phase it is stuck in (a `drop ...` line with no
+  `drop done` = the hang is inside a per-file handler).
+  2026-11-24: studied the 8 field logs the user sent (11-21 → 11-23) — all
+  drag crash/hang events are **proxy-plugin** in-app drags, not bridge file
+  drops: `doc_9c71f` (11-23 11:51) shows 3× `DRAG-OP-START` with **zero**
+  `DRAG-OP-END` = the drag image is never torn down
+  (`DragImageComponent` dtor is the only `dragOperationEnded` site);
+  `doc_1362b` (11-23 10:38) is fully green (2× OP-START/END pairs).
+  Logs had no app-start markers and no way to point at a per-run file, so
+  both plugins now (a) honor `HEDDLE_LOGDIR` (DAW-inherited; harness sets it
+  to `temp\run_v.0.1.14\logs`; the proxy's filename also honors
+  `HEDDLE_LOGNAME` — harness sets `03d_debug.log`, the user-requested
+  `temp\run_v.0.1.14\logs\03d_debug.log` — while the bridge keeps
+  `debug.log` in the same dir),
+  (b) add a wall-clock to every line, and (c) write `RUN-START`/`RUN-END`
+  banners (plugin/ver/pid) from processor AND editor ctor/dtor — a
+  `RUN-START` without a matching `RUN-END` = that DAW instance was killed.
+  Both VST3s rebuild clean 2026-11-24 12:40 (build-msvc-perf2 Release).
+  Crash logs from the user still not received — the next field test's log
+  will now self-attribute every line to a run. Full log table + expected
+  output: `tasks/00001_bridge_drag_crash_fix.md` appendix.
 - 🔨 **Version metainfo in the binaries** (re-opened — field test disproved
   the earlier "done"). Root cause found: the field-tested 0.1.14 MSI
   (built 2026-11-21 22:07) packaged `build-msvc-perf2/host/Release/heddle-host.exe`
@@ -980,4 +996,9 @@ current after every session** — last section first.
     in the URL is a fallback only. Code-only on GitHub — no binaries in
     commits, releases, or workflow artefacts (why: the
     [License](README.md#license) section in README).
+13. **Field-test delivery (user rule, 2026-11-24):** the user has NO access
+    to the build host — never point him at local build-tree artefacts. Every
+    change that needs a field test ships as a **fresh MSI via email**
+    (`scripts/build_package.ps1` → plain 7z, MSI entry renamed
+    `heddle-X.Y.Z-setup-x64`, no password, IMAP-verify the probe first).
 - 2026-11-01 22:22:53 Fix: Linking with forbidden juce_audio_plugin_client. Action: Commented out linking line in /d/Hermes/MV/projects/heddle/.git/logs/HEAD

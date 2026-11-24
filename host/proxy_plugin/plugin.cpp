@@ -28,6 +28,8 @@
 #include <functional>
 #include <string>
 
+#include <windows.h>  // before JuceHeader.h: JUCE defines WIN32_LEAN_AND_MEAN around its own <windows.h>; including it first keeps the full API (GetCurrentProcessId) available
+
 #include "JuceHeader.h"
 #include "heddle/proxy.hpp"
 #include "heddle/proxy_engine.hpp"
@@ -48,17 +50,51 @@ inline juce::String jstr(const std::string& x) { return juce::String::fromUTF8(x
 // field, and this box has no Ableton / no synthetic-OS-drag repro, so the next
 // test must be able to tell us the EXACT sequence around a crash. Every drag
 // source event and every learn-list rebuild is appended (best-effort, guarded)
-// to ~\HeddleProxy\debug.log with a millisecond timestamp. Cheap, and it
+// to the field log with a millisecond + wall-clock timestamp. Cheap, and it
 // survives the crash (the line is flushed per write) so we can read what the
 // user was doing at drag start even if the host dies.
+//
+// Log location (0.1.14): defaults to ~\HeddleProxy\debug.log. The test
+// harness overrides it via the HEDDLE_LOGDIR env var (inherited by the DAW
+// and every plugin it loads, proxy AND bridge) so a whole test run's logs
+// land in one known place: temp\run_v.X.Y.Z\logs\*.log — HEDDLE_LOGNAME
+// (default "debug.log") picks the file name, so the harness can ask for
+// 03d_debug.log (task 00001) while the bridge keeps its own debug.log in
+// the same dir. The file is APPENDED across runs by design, so each plugin
+// instance writes RUN-START / RUN-END banners (with PID + version) that
+// split one file into runs — the last RUN-START before a crash line is the
+// run that crashed.
 // ---------------------------------------------------------------------------
+static juce::File fieldLogFile() {
+    const juce::String dir =
+        juce::SystemStats::getEnvironmentVariable("HEDDLE_LOGDIR", "");
+    if (!dir.isEmpty()) {
+        juce::File d(dir);
+        if (d.isDirectory())
+            return d.getChildFile(
+                juce::SystemStats::getEnvironmentVariable("HEDDLE_LOGNAME", "debug.log"));
+    }
+    return juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+        .getChildFile("HeddleProxy").getChildFile("debug.log");
+}
+
+#if JUCE_WINDOWS
+// The <windows.h> include at the top of this file (deliberately BEFORE
+// JuceHeader.h, see there) already brought in the SDK declaration; the extern
+// keeps the call independent of that if the includes ever get reordered.
+extern "C" unsigned long __stdcall GetCurrentProcessId();
+static unsigned int fieldPid() { return static_cast<unsigned int>(GetCurrentProcessId()); }
+#else
+static unsigned int fieldPid() { return 0; }
+#endif
+
 static void fieldLog(const juce::String& what) {
     try {
-        const juce::File f = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
-            .getChildFile("HeddleProxy").getChildFile("debug.log");
+        const juce::File f = fieldLogFile();
         if (f.getParentDirectory().exists() || f.getParentDirectory().createDirectory())
-            f.appendText(juce::String(juce::Time::currentTimeMillis()) + "  " + what
-                         + juce::newLine);
+            f.appendText(juce::String(juce::Time::currentTimeMillis()) + "  "
+                         + juce::Time::getCurrentTime().toString(true, true) + "  "
+                         + what + juce::newLine);
     } catch (...) {}
 }
 
@@ -86,11 +122,18 @@ public:
         cfg_.listenHost = "0.0.0.0";
         cfg_.mode = "only-control";
         startTimerHz(200);  // pump OSC ~5ms (non-blocking) on the msg thread
+        // 0.1.14: instance-level run banner (the DAW may create processors
+        // without opening the editor — enumeration scan included — so the
+        // processor, not the editor, is the true "app start" marker).
+        fieldLog("RUN-START plugin=HeddleProxy ver=" JucePlugin_VersionString
+                 " pid=" + juce::String(fieldPid()) + " instance created");
     }
 
     ~ProxyProcessor() override {
         stopTimer();
         engine_.stop();
+        fieldLog("RUN-END plugin=HeddleProxy ver=" JucePlugin_VersionString
+                 " pid=" + juce::String(fieldPid()) + " instance destroyed");
     }
 
     static juce::AudioProcessor* createPluginFilter() { return new ProxyProcessor(); }
@@ -975,6 +1018,14 @@ public:
         applyLock();
         refreshStatus();
         resized();  // layout now that all children exist (first setSize skipped it)
+        // 0.1.14: run banner — the field log is appended across DAW/plugin
+        // lifetimes, so every editor instance marks its own span. The last
+        // RUN-START before a crash line is the run that died; a RUN-START
+        // without a matching RUN-END = the DAW (and this plugin instance)
+        // was killed, not closed cleanly.
+        fieldLog("RUN-START plugin=HeddleProxy ver=" JucePlugin_VersionString
+                 " pid=" + juce::String(fieldPid())
+                 + " editor open (DAW instance start)");
     }
 
     // ---- DragAndDropContainer lifecycle (0.1.14 drag-crash fix) -----------
@@ -1025,6 +1076,10 @@ public:
     }
 
     ~ProxyEditor() override {
+        // 0.1.14: closing run banner (pairs with the RUN-START in the ctor).
+        fieldLog("RUN-END plugin=HeddleProxy ver=" JucePlugin_VersionString
+                 " pid=" + juce::String(fieldPid())
+                 + " editor closed (clean)");
         // #9: final sync of the on-screen fields into cfg_. The DAW may have
         // already taken its state snapshot, and the 4 Hz timer keeps cfg_
         // current regardless — this is belt-and-braces for a save taken

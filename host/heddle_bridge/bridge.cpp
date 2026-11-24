@@ -77,6 +77,16 @@
 #include <unistd.h>
 #endif
 
+#if JUCE_WINDOWS
+// Same WIN32_LEAN_AND_MEAN situation as the proxy plugin (see its
+// fieldPid comment): the <windows.h> include at the top of this file already
+// brought in the SDK declaration; the extern below is compatible with it.
+extern "C" unsigned long __stdcall GetCurrentProcessId();
+static unsigned int bridgePid() { return static_cast<unsigned int>(GetCurrentProcessId()); }
+#else
+static unsigned int bridgePid() { return 0; }
+#endif
+
 namespace heddle_bridge {
 
 // Default ring names. Must match the heddle-host --ring PREFIX (default
@@ -136,6 +146,9 @@ static bool heddleHostRunning() {
 
 class BridgeProcessor;
 class BridgeEditor;  // forward decls (editor ctor takes BridgeProcessor&)
+// Field-forensics logger (defined with BridgeSettings below; the processor's
+// ctor/dtor banners fire before that point in translation order).
+void bridgeLog(const juce::String& what);
 
 // ---------------------------------------------------------------------------
 // Launcher model: the ordered list of chain slots the user is building.
@@ -168,12 +181,19 @@ public:
         // 1 s poll is plenty: the host's rings either exist (host is up) or
         // they appear within a second or two of the user starting the host.
         startTimerHz(1);
+        // 0.1.14: instance-level run banner (the DAW may create processors
+        // without opening the editor — enumeration scan included — so the
+        // processor, not the editor, is the true "app start" marker).
+        bridgeLog("RUN-START plugin=HeddleBridge ver=" JucePlugin_VersionString
+                  " pid=" + juce::String(bridgePid()) + " instance created");
     }
 
     ~BridgeProcessor() override {
         stopTimer();
         ringIn_.close();   // safe on an invalid ring (no-op)
         ringOut_.close();
+        bridgeLog("RUN-END plugin=HeddleBridge ver=" JucePlugin_VersionString
+                  " pid=" + juce::String(bridgePid()) + " instance destroyed");
     }
 
     static juce::AudioProcessor* createPluginFilter() {
@@ -386,6 +406,40 @@ static juce::File locateHostExe() {
 }
 
 // ---------------------------------------------------------------------------
+// Field-forensics log (0.1.14): same discipline as the proxy plugin.
+// Location: the HEDDLE_LOGDIR env var (set by the test harness so a whole
+// run's logs land in temp\run_v.X.Y.Z\logs\debug.log; the DAW inherits it
+// and so do both plugins), else ~\HeddleBridge\debug.log (the settings dir,
+// next to settings.json — where the load/store lines always went). Appended
+// across runs; each instance writes RUN-START / RUN-END banners (PID +
+// version) that split one file into runs — the last RUN-START before a crash
+// line is the run that died. Every line is ms-epoch + wall-clock.
+// ---------------------------------------------------------------------------
+static juce::File bridgeLogFile() {
+    const juce::String dir =
+        juce::SystemStats::getEnvironmentVariable("HEDDLE_LOGDIR", "");
+    if (!dir.isEmpty()) {
+        juce::File d(dir);
+        if (d.isDirectory())
+            return d.getChildFile("debug.log");   // bridge keeps debug.log;
+                                                  // HEDDLE_LOGNAME is the
+                                                  // harness's for the proxy
+    }
+    return juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+        .getChildFile(kAppName).getChildFile("debug.log");
+}
+
+static void bridgeLog(const juce::String& what) {
+    try {
+        const juce::File f = bridgeLogFile();
+        if (f.getParentDirectory().exists() || f.getParentDirectory().createDirectory())
+            f.appendText(juce::String(juce::Time::currentTimeMillis()) + "  "
+                         + juce::Time::getCurrentTime().toString(true, true) + "  "
+                         + what + juce::newLine);
+    } catch (...) {}
+}
+
+// ---------------------------------------------------------------------------
 // Editor-side launcher settings, persisted as a tiny key=value text file in
 // the user's home dir (no app-data quirks, works under DAW UAC too).
 struct BridgeSettings {
@@ -439,12 +493,8 @@ struct BridgeSettings {
         // Field-forensics (0.1.12): record that an instance loaded the file and
         // what it read, so we can see if two instances are loading different
         // contents (the clobber signature).
-        try {
-            juce::File lf = f.getParentDirectory().getChildFile("debug.log");
-            lf.appendText(juce::String(juce::Time::currentTimeMillis())
-                          + "  load chainJsonBytes=" + juce::String(chainJson.getNumBytesAsUTF8())
-                          + " hostExe=" + hostExe + juce::newLine);
-        } catch (...) {}
+        bridgeLog("load chainJsonBytes=" + juce::String(chainJson.getNumBytesAsUTF8())
+                 + " hostExe=" + hostExe);
     }
     bool store() const {
         // Any editor that persists is, by definition, one the user has used —
@@ -461,13 +511,9 @@ struct BridgeSettings {
         const juce::File f = file();
         if (!f.getParentDirectory().exists()) f.getParentDirectory().createDirectory();
         const bool ok = f.replaceWithText(out);
-        try {
-            f.getParentDirectory().getChildFile("debug.log")
-             .appendText(juce::String(juce::Time::currentTimeMillis())
-                         + "  store chainJsonBytes=" + juce::String(chainJson.getNumBytesAsUTF8())
-                         + " dirty=" + juce::String((int) dirty_)
-                         + " ok=" + juce::String((int) ok) + juce::newLine);
-        } catch (...) {}
+        bridgeLog("store chainJsonBytes=" + juce::String(chainJson.getNumBytesAsUTF8())
+                 + " dirty=" + juce::String((int) dirty_)
+                 + " ok=" + juce::String((int) ok));
         return ok;
     }
     bool dirty() const { return dirty_; }
@@ -726,6 +772,11 @@ public:
         setResizable(false, false);
         setSize(620, 470);
         startTimerHz(2);
+        // 0.1.14: run banner (pairs with the processor's; the editor banner
+        // marks when the user actually opened the window).
+        bridgeLog("RUN-START plugin=HeddleBridge ver=" JucePlugin_VersionString
+                  " pid=" + juce::String(bridgePid())
+                  + " editor open (DAW instance start)");
     }
 
     ~BridgeEditor() override {
@@ -738,14 +789,13 @@ public:
         if (settings_.dirty())
             settings_.store();
         else {
-            try {
-                BridgeSettings::file().getParentDirectory()
-                    .getChildFile("debug.log")
-                    .appendText(juce::String(juce::Time::currentTimeMillis())
-                                + "  dtor SKIP (not dirty; slots="
-                                + juce::String(slots_.size()) + ")" + juce::newLine);
-            } catch (...) {}
+            bridgeLog("dtor SKIP (not dirty; slots="
+                     + juce::String(slots_.size()) + ")");
         }
+        // 0.1.14: closing run banner (pairs with the RUN-START in the ctor).
+        bridgeLog("RUN-END plugin=HeddleBridge ver=" JucePlugin_VersionString
+                  " pid=" + juce::String(bridgePid())
+                  + " editor closed (clean)");
     }
 
     void paint(juce::Graphics& g) override {
@@ -807,11 +857,7 @@ public:
     // self-reports exactly which phase it is stuck in (a "drop ..." line with
     // no "drop done" = the hang is inside one of the per-file handlers).
     void dragLog(const juce::String& phase) {
-        try {
-            BridgeSettings::file().getParentDirectory().getChildFile("debug.log")
-                .appendText(juce::String(juce::Time::currentTimeMillis())
-                            + "  drag " + phase + juce::newLine);
-        } catch (...) {}
+        bridgeLog("drag " + phase);
     }
     bool isInterestedInFileDrag(const juce::StringArray& files) override {
         try {
@@ -907,11 +953,7 @@ private:
     // in the field instead of silent (the 0.1.12 bug was exactly this: a
     // silent early-return left the list empty with no trace).
     void logRestore(const juce::String& what) {
-        try {
-            BridgeSettings::file().getParentDirectory().getChildFile("debug.log")
-                .appendText(juce::String(juce::Time::currentTimeMillis())
-                            + "  restore " + what + juce::newLine);
-        } catch (...) {}
+        bridgeLog("restore " + what);
     }
     void failRestore(const juce::String& what) {
         logRestore("FAIL " + what);
