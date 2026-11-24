@@ -429,7 +429,7 @@ static juce::File bridgeLogFile() {
         .getChildFile(kAppName).getChildFile("debug.log");
 }
 
-static void bridgeLog(const juce::String& what) {
+void bridgeLog(const juce::String& what) {
     try {
         const juce::File f = bridgeLogFile();
         if (f.getParentDirectory().exists() || f.getParentDirectory().createDirectory())

@@ -3,6 +3,31 @@
 Updated by whoever works on the project (human or agent). **Keep this file
 current after every session** — last section first.
 
+## CI auto-fix: 0.1.14 build blockers (bridge extern/static + PE windres) (2026-11-24)
+
+- 🔨 **CI run `45452405030` (sha `bd8b925`, 0.1.14b) RED on 2/6 jobs — auto-fix
+  attempt 1/3.** Two independent **pre-existing** build blockers (both predate
+  `bd8b925`; that commit only touched drag/remember-paths files, so its diff is
+  empty for these). The 4 green jobs + the 2 `FileNotFoundError:
+  'osc_perf_*.txt'` lines in the failing jobs are downstream fallout from the
+  aborted build (the perf script runs after `cmake --build`), not separate bugs.
+  1. **host (ubuntu) — `bridge.cpp:432`**: `bridgeLog` was forward-declared
+     `extern` (L151) but defined `static` (L432) → GCC `was declared 'extern'
+     and later 'static'`. Fix: drop `static` so the definition matches the
+     forward decl (it is intentionally non-static — the processor ctor at L187
+     calls it *before* the definition). Linux-only: the VS generator (MSVC)
+     tolerates the extern/static mismatch as a warning, not an error.
+  2. **core (windows) — `heddle-proxy.version.rc:23: syntax error` (GNU
+     `windres`)**: `version.rc.in` carried a trailing ` 0` after each `VALUE`
+     string (the MS-only "single-null-terminate" flag). The **host (windows)**
+     job passed because it uses the VS generator (Microsoft `rc.exe`, which
+     accepts the flag), but the **core** job uses the mingw/Ninja generator →
+     GNU `windres`, which rejects the trailing `0`. Fix: remove the trailing
+     ` 0` (semantically identical — the display strings are still
+     double-null-terminated in the PE). A/B-verified locally: the identical
+     `VERSIONINFO` compiles under windres only with the trailing `0` removed.
+  Next tick: CI must go 6/6 green (host ×3 + core ×3) to close this out.
+
 ## 0.1.14 field-test fixes: drag crash/hang + version Details + remember-paths (2026-11-22)
 
 - 🔨 **Bridge drag crash/hang hardening** (`host/heddle_bridge/bridge.cpp`).
@@ -282,6 +307,37 @@ current after every session** — last section first.
   is undeclared in a TU after `JuceHeader.h` — fixed via top-of-file
   `<windows.h>` include (proxy) / `<tlhelp32.h>` chain (bridge).
   Tasks tracker created (`tasks/` + `tasks/done/`, one MD per task).
+
+- **2026-11-24 (round 2)** — **Learn-row drag-RELEASE crash fixed (0.1.14b) + remember-paths on upgrade. Committed + pushed `bd8b925`. MSI `6AE3A17019D8` shipped by email (SENT_OK).**
+  User's first run-marked field log (`doc_75129f6c`, two runs): run 1
+  (pid 4980) DISCOVERED-row drag, released outside the table → clean
+  `DRAG-OP-END`; run 2 (pid 42740) LEARNED row `/fader1` (2 learn rows,
+  live fader traffic) → `DRAG-OP-START`, 2 heartbeats, silence — no
+  `DRAG-OP-END`/`RUN-END`, process died ≤ ~250 ms after the mouse-up.
+  Root cause (code-verified, vendored JUCE 8.0.4): `isDragging()` =
+  button-down (`juce_MouseInputSourceImpl.h` L49-52), but
+  `DragImageComponent` outlives mouse-up ~120 ms fade + 200 ms delete
+  timer (juce_DragAndDropContainer L68/L187-209); the 4 Hz tick guard
+  (`!anyButtonHeld && draggingSources==0`) then ran `refreshLearn()` →
+  `updateContent()` recycled the learn rows mid-teardown under live
+  traffic. Run 1 clean: `learnRows=0`, nothing to rebuild. Fix: learn
+  list frozen while `isDragAndDropActive()` (drag image alive), plus
+  `learn-refresh-DEFERRED` edge log proving the guard fired.
+  Installer: remember-paths CA was conditioned `NOT Installed` — FALSE
+  on in-place upgrade, so HKCU key never written, dialog showed defaults
+  (user report same day "install path is however not preserved"). Now
+  unconditional `Before=InstallFinalize`; verified in the built MSI by
+  `dark` decompile (`<Custom Action="HeddleRememberPaths" Before="InstallFinalize">1</Custom>`).
+  Log-location note: the log came from the fallback
+  `%USERPROFILE%\HeddleProxy\debug.log` — `setx` env vars didn't reach
+  the DAW (started outside the shell that ran `setx`); harmless, the
+  fallback works. Rebuild: proxy green (BUILD_EXIT=0), MSI repacked,
+  7z (9,298,072 B, entry `heddle-0.1.14-setup-x64`, no name leaks) →
+  probe IMAP-verified → SENT_OK to the user. Next: user repeats the
+  crash scenario (learned-row drag, release outside) + checks
+  `%USERPROFILE%\Heddle\remember.log` after the upgrade; log should
+  show `learn-refresh-DEFERRED` around releases, `DRAG-OP-END` on every
+  drag, clean `RUN-END`. Full study: `tasks/00001` appendix §8.
 
 - **2026-10-25** — **Proxy per-route value mapping + RECEIVED learn list. Committed `472925d`, CI GREEN (run 40152029920, all 6 jobs).**
   (a) *Per-route value mapping*: `ProxyCurve` (identity/exp/invexp/scurve +

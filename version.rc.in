@@ -20,14 +20,14 @@ BEGIN
   BEGIN
     BLOCK "040904B0"
     BEGIN
-      VALUE "CompanyName",      "Mykhailo (MV) - iriserme-mva" 0
-      VALUE "FileDescription",  "Heddle - audio chain host / offline renderer / OSC router" 0
-      VALUE "FileVersion",      "@HEDDLE_VRC_VERSION@" 0
-      VALUE "InternalName",     "@HEDDLE_INTERNAL_NAME@" 0
-      VALUE "LegalCopyright",   "Copyright (c) 2026 Mykhailo (MV). Licence: see LICENSE." 0
-      VALUE "OriginalFilename", "@HEDDLE_OUTPUT_NAME@" 0
-      VALUE "ProductName",      "Heddle" 0
-      VALUE "ProductVersion",   "@HEDDLE_VRC_VERSION@" 0
+      VALUE "CompanyName",      "Mykhailo (MV) - iriserme-mva"
+      VALUE "FileDescription",  "Heddle - audio chain host / offline renderer / OSC router"
+      VALUE "FileVersion",      "@HEDDLE_VRC_VERSION@"
+      VALUE "InternalName",     "@HEDDLE_INTERNAL_NAME@"
+      VALUE "LegalCopyright",   "Copyright (c) 2026 Mykhailo (MV). Licence: see LICENSE."
+      VALUE "OriginalFilename", "@HEDDLE_OUTPUT_NAME@"
+      VALUE "ProductName",      "Heddle"
+      VALUE "ProductVersion",   "@HEDDLE_VRC_VERSION@"
     END
   END
   BLOCK "VarFileInfo"
