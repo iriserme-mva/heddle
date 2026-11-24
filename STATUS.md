@@ -3,6 +3,22 @@
 Updated by whoever works on the project (human or agent). **Keep this file
 current after every session** — last section first.
 
+## CI auto-fix: proxy plugin unguarded windows.h on Linux (2026-11-24)
+
+- 🔨 **CI run `45458546552` (sha `ff0904f`, attempt 1's fix) RED on 1/6 jobs —
+  auto-fix attempt 2/3.** The attempt-1 fixes (bridge extern/static, windres)
+  landed: host (windows) + all 3 core jobs + host (macos) now pass. Remaining
+  failure: **host (ubuntu)** — `host/proxy_plugin/plugin.cpp:31: fatal error:
+  windows.h: No such file or directory`. The 0.1.14 field-log PID support
+  added an unconditional `#include <windows.h>` at the top of proxy plugin.cpp
+  (before JuceHeader.h, for the full non-LEAN API); only the `GetCurrentProcessId`
+  use site below is `#if JUCE_WINDOWS`-guarded, not the include itself. The
+  Windows host job passed because there windows.h exists. Fix: guard the
+  include with `#if JUCE_WINDOWS` (the non-LEAN include-before-JuceHeader
+  ordering is preserved on Windows; on Linux/macOS fieldPid() already returns
+  0). The `FileNotFoundError: 'osc_perf_host.txt'` line is again downstream
+  fallout of the aborted build. Next tick: CI must go 6/6 green.
+
 ## CI auto-fix: 0.1.14 build blockers (bridge extern/static + PE windres) (2026-11-24)
 
 - 🔨 **CI run `45452405030` (sha `bd8b925`, 0.1.14b) RED on 2/6 jobs — auto-fix
@@ -271,7 +287,7 @@ current after every session** — last section first.
 | host: `heddle-host` standalone live chain host (headless-ready, OSC-driven) | ✅ **CI GREEN** (run 38525679263, `0fdb134`): `host_main.cpp` 780-line rewrite; null-mode + OSC 4/4 local; see log 2026-10-14 (1) |
 | host: `heddle-host` `--gui` param-control window (t3inc2) | ✅ **CI GREEN** (run 38733502466, `de0c36c`): local 4/4 verified 2026-10-15 (core 57/57, smoke, OSC 4/4, `--gui` clean exit) + full CI green: `ChainGuiContent` + `HeddleHostWindow` (ResizableWindow) spliced into `host_main.cpp` (~1143 lines); CMake `+juce_graphics`/`juce_gui_basics` on heddle-host; **deadlock fix**: `guiStart()` before audio-thread start (GUI ctor takes `chainLock_` blocking once; audio thread try-locks per 512-sample block → post-startup GUI uses `GenericScopedTryLock` only) |
 | host: CMake (JUCE 8.0.4 sha256-pinned, opt-in HEDDLE_BUILD_HOST) | ✅ pushed; FORMATS VST3 wrapper fix pending CI verification |
-| host: CI (3-OS matrix + smoke param assertions) | ✅ **GREEN 6/6** (run 37984831984, `f6c9d22`): plugin loads, no crash, smoke assertions pass on Linux/macOS/Windows; `crash_diag` instrumentation removed |
+| host: CI (3-OS matrix + smoke param assertions) | 🔨 **RED 1/6 → fixing** (run 45458546552, `ff0904f`): host (ubuntu) only — proxy plugin.cpp unguarded `#include <windows.h>` (0.1.14 field-log PID); attempt-2 fix guards it with `#if JUCE_WINDOWS`, awaiting next CI run |
 | cli: `heddle-render` offline audio→audio (item 8) | ✅ **CI GREEN** (run 38021890348, `df334c1`): param-push + stride-invariant render + CMake + CI render job (WAV selftest + `DryMix=0.5` gain-ratio assert on all 3 OSes). First compile red 3/3 (bare `int64` + const `createWriterFor`) fixed in the same commit |
 | prebuilt binaries / distribution | ✅ **CODE-ONLY policy** (decision 2026-10-15, Miha): all binary assets purged from GitHub (3 release assets from v0.1.5 + 15 workflow artifacts deleted 2026-10-15); `release.yml` removed; new manual-only `build.yml` (workflow_dispatch, 3-OS, 7-day artifact retention) + `heddle-ci-artifact-fetch` skill (fetch locally → delete from GH); README re-written (no "quick start binaries"; License section documents JUCE AGPL/commercial + VST3 SDK constraint). Long term: code-only, or buy JUCE commercial licence if we ever distribute commercially |
 | packaging (item 8f) | ✅ root LICENSE (MIT), `--version` + CMake version stamp 0.1.0, README render docs + JUCE AGPLv3/commercial license correction |

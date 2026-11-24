@@ -28,7 +28,13 @@
 #include <functional>
 #include <string>
 
-#include <windows.h>  // before JuceHeader.h: JUCE defines WIN32_LEAN_AND_MEAN around its own <windows.h>; including it first keeps the full API (GetCurrentProcessId) available
+#if JUCE_WINDOWS
+// Windows only (field-log PID): before JuceHeader.h because JUCE defines
+// WIN32_LEAN_AND_MEAN around its own <windows.h>; including it first keeps the
+// full API (GetCurrentProcessId) available. Must stay guarded — the Linux /
+// macOS host jobs have no windows.h (run 45458546552, host/ubuntu failure).
+#include <windows.h>
+#endif
 
 #include "JuceHeader.h"
 #include "heddle/proxy.hpp"
