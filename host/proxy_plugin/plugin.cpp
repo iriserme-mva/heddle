@@ -28,12 +28,21 @@
 #include <functional>
 #include <string>
 
-#if JUCE_WINDOWS
-// Windows only (field-log PID): before JuceHeader.h because JUCE defines
-// WIN32_LEAN_AND_MEAN around its own <windows.h>; including it first keeps the
-// full API (GetCurrentProcessId) available. Must stay guarded — the Linux /
-// macOS host jobs have no windows.h (run 45458546552, host/ubuntu failure).
+#if defined(WIN32) || defined(_WIN32)
+// Windows only: MUST be guarded on WIN32 (the project's defined macro), NOT
+// JUCE_WINDOWS — JUCE_WINDOWS is only defined inside juce_TargetPlatform.h,
+// i.e. AFTER JuceHeader.h, so a #if JUCE_WINDOWS here is silently FALSE and
+// this block is skipped (that bug cost one 0.1.14c build round: C2065
+// PEXCEPTION_POINTERS / LONG undeclared in the crash-dump block below).
+// Included before JuceHeader.h because JUCE defines WIN32_LEAN_AND_MEAN
+// around its own <windows.h>; including it first keeps the full API
+// (GetCurrentProcessId) available. Must stay guarded — the Linux / macOS
+// host jobs have no windows.h (run 45458546552, host/ubuntu failure).
 #include <windows.h>
+// 0.1.14c crash-dump forensics: dbghelp.h for MiniDumpWriteDump. Global
+// scope (not inside namespace heddle_proxy), before JuceHeader.h.
+#include <dbghelp.h>
+#pragma comment(lib, "dbghelp.lib")
 #endif
 
 #include "JuceHeader.h"
@@ -50,6 +59,12 @@ using RecentMsg = heddle::ProxyEngine::RecentMsg;  // nested type, not covered b
 // JUCE String from a std::string (String::fromUTF8 takes const char*; the
 // std::string ctor is not used so the char-set is explicit).
 inline juce::String jstr(const std::string& x) { return juce::String::fromUTF8(x.data()); }
+
+// Build revision, logged on every RUN-START / RUN-END (0.1.14c): the MSI /
+// VST3 product version is 0.1.14 for all of 0.1.14, 0.1.14b and 0.1.14c
+// (WiX product versions can't carry a letter after the third component), so
+// the field log alone is the only way to tell WHICH build a crash came from.
+static const char* kBuildRevision = "0.1.14c";
 
 // ---------------------------------------------------------------------------
 // Field-forensics log (0.1.12): the 0.1.11 drag guard was falsified in the
@@ -104,6 +119,82 @@ static void fieldLog(const juce::String& what) {
     } catch (...) {}
 }
 
+// ===========================================================================
+// Crash-dump forensics (0.1.14c, 2026-11-24).
+//
+// The 0.1.14b "learn-list freeze" fix was FALSIFIED by the field log
+// (doc_9aeedae, 4 runs, 22:05-23:21): every drag now dies MID-drag,
+// button still down (last line buttonDown=1 dragSrc=1), 0.13-0.72 s
+// after DRAG-OP-START — including DISCOVERED drags (run 2: discRows=517,
+// empty learn list). That rules out the learn-list refresh (frozen by the
+// guard in that very log) as the cause, and the crash moved from release
+// (doc_75129f6c) to mid-drag. No further guessing: this build writes a
+// Windows minidump on the fatal exception (SEH vector handler ->
+// MiniDumpWriteDump) into the HeddleProxy log dir, so the next crash
+// yields the exact faulting stack. Symbolicated with the PDB next to the
+// built HeddleProxy.vst3 in this repo's build tree. (dbghelp.h is included
+// at the top of this file, see there.)
+// ===========================================================================
+#if JUCE_WINDOWS
+static juce::File crashDumpFile() {
+    // (no File::withFileName in this JUCE fork — build the child path
+    // manually from the log file's parent dir.)
+    juce::File dir = fieldLogFile().getParentDirectory();
+    if (!dir.exists())
+        dir = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+                .getChildFile("HeddleProxy");
+    return dir.getChildFile(
+        "crash-" + juce::String(fieldPid()) + "-"
+        + juce::String(juce::Time::currentTimeMillis()) + ".dmp");
+}
+
+static LONG __stdcall crashDumpSehHandler(PEXCEPTION_POINTERS info) {
+    if (info == nullptr) return EXCEPTION_CONTINUE_SEARCH;
+    const DWORD c = info->ExceptionRecord->ExceptionCode;
+    // Fatal codes that reach a top-level handler: the process is about to
+    // die no matter what; writing the dump here is safe.
+    if (c != 0xC0000005 && c != 0xC000001D && c != 0xC0000409 &&
+        c != 0x80000003 && c != 0x40010006)
+        return EXCEPTION_CONTINUE_SEARCH;
+    try {
+        const juce::File d = crashDumpFile();
+        if (d.getParentDirectory().exists() || d.getParentDirectory().createDirectory()) {
+            HANDLE h = CreateFileW(
+                d.getFileName().toWideCharPointer(), FILE_WRITE_DATA,
+                FILE_SHARE_READ, nullptr, CREATE_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h != INVALID_HANDLE_VALUE) {
+                // Layout (minidumpapiset.h): {ThreadId, ExceptionPointers,
+                // ClientPointers} — the pointers struct is `info` itself.
+                MINIDUMP_EXCEPTION_INFORMATION mi{
+                    static_cast<DWORD>(GetCurrentThreadId()), info, FALSE};
+                BOOL ok = MiniDumpWriteDump(
+                    GetCurrentProcess(), fieldPid(), h, MiniDumpNormal,
+                    &mi, nullptr, nullptr);
+                CloseHandle(h);
+                // toHexString is int64-based, so 0xC0000409 (> INT_MAX)
+                // survives (the (int) ctor would render it negative).
+                fieldLog("CRASH-DUMP code=0x" +
+                         juce::String::toHexString(static_cast<juce::int64>(c)) +
+                         (ok ? " written " : " FAILED ") + d.getFullPathName());
+            }
+        }
+    } catch (...) {}
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static void installCrashDumpHandlers() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    fieldLog("CRASH-DUMP-ARMED (SEH vector handler) dump dir=" +
+             crashDumpFile().getParentDirectory().getFullPathName());
+    AddVectoredExceptionHandler(1, crashDumpSehHandler);  // highest priority
+}
+#else
+static void installCrashDumpHandlers() {}
+#endif
+
 // Forward decl: the editor is defined after the processor (createEditor()
 // returns a new one).
 class ProxyEditor;
@@ -128,18 +219,21 @@ public:
         cfg_.listenHost = "0.0.0.0";
         cfg_.mode = "only-control";
         startTimerHz(200);  // pump OSC ~5ms (non-blocking) on the msg thread
+        installCrashDumpHandlers();  // 0.1.14c: minidump on fatal exception
         // 0.1.14: instance-level run banner (the DAW may create processors
         // without opening the editor — enumeration scan included — so the
         // processor, not the editor, is the true "app start" marker).
-        fieldLog("RUN-START plugin=HeddleProxy ver=" JucePlugin_VersionString
-                 " pid=" + juce::String(fieldPid()) + " instance created");
+        fieldLog("RUN-START plugin=HeddleProxy ver=" JucePlugin_VersionString " bld="
+                 + juce::String(kBuildRevision) + " pid=" + juce::String(fieldPid())
+                 + " instance created");
     }
 
     ~ProxyProcessor() override {
         stopTimer();
         engine_.stop();
-        fieldLog("RUN-END plugin=HeddleProxy ver=" JucePlugin_VersionString
-                 " pid=" + juce::String(fieldPid()) + " instance destroyed");
+        fieldLog("RUN-END plugin=HeddleProxy ver=" JucePlugin_VersionString " bld="
+                 + juce::String(kBuildRevision) + " pid=" + juce::String(fieldPid())
+                 + " instance destroyed");
     }
 
     static juce::AudioProcessor* createPluginFilter() { return new ProxyProcessor(); }
@@ -1029,8 +1123,8 @@ public:
         // RUN-START before a crash line is the run that died; a RUN-START
         // without a matching RUN-END = the DAW (and this plugin instance)
         // was killed, not closed cleanly.
-        fieldLog("RUN-START plugin=HeddleProxy ver=" JucePlugin_VersionString
-                 " pid=" + juce::String(fieldPid())
+        fieldLog("RUN-START plugin=HeddleProxy ver=" JucePlugin_VersionString " bld="
+                 + juce::String(kBuildRevision) + " pid=" + juce::String(fieldPid())
                  + " editor open (DAW instance start)");
     }
 
@@ -1083,8 +1177,8 @@ public:
 
     ~ProxyEditor() override {
         // 0.1.14: closing run banner (pairs with the RUN-START in the ctor).
-        fieldLog("RUN-END plugin=HeddleProxy ver=" JucePlugin_VersionString
-                 " pid=" + juce::String(fieldPid())
+        fieldLog("RUN-END plugin=HeddleProxy ver=" JucePlugin_VersionString " bld="
+                 + juce::String(kBuildRevision) + " pid=" + juce::String(fieldPid())
                  + " editor closed (clean)");
         // #9: final sync of the on-screen fields into cfg_. The DAW may have
         // already taken its state snapshot, and the 4 Hz timer keeps cfg_

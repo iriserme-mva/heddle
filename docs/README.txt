@@ -78,7 +78,26 @@ VST3: drop HeddleProxy.vst3 into your VST3 folder, insert on a track,
 open its editor UI to configure routes/mapping visually (save writes the config
 JSON next to the patch).
 
-New in this build (0.1.14)
+New in this build (0.1.14c - crash-dump forensics)
+  - NEW (proxy): Windows minidump on crash. The 0.1.14b learn-list fix was
+    FALSIFIED in the field (2026-11-24 log, 4 runs): the crash is a MID-drag
+    death (last line buttonDown=1 dragSrc=1, 0.13-0.72 s after drag start,
+    before the pointer reaches the route table) in BOTH learned and
+    discovered drags, with the guard active. No more theory-guessing: this
+    build registers a SEH vectored exception handler that, on a fatal
+    exception (access violation / illegal instruction / stack-buffer-overrun
+    / breakpoint / guard page), writes a Windows minidump next to the field
+    log as crash-<pid>-<ms>.dmp and appends a "CRASH-DUMP code=0x... written
+    <path>" line. Send that .dmp back and the exact faulting stack is
+    symbolicated against this build's PDB.
+  - NEW (proxy): build revision in the run banners. RUN-START / RUN-END now
+    also carry bld=0.1.14c, because the product version stays 0.1.14 for
+    0.1.14 / 0.1.14b / 0.1.14c - the log line is the only way to tell which
+    build a crash came from.
+  - NOTE: this build is the instrumented one, NOT the fix. The drag still
+    crashes the same way - that is the point: one crash now yields the
+    faulting stack.
+New in 0.1.14b (falsified in field - kept, harmless)
   - FIX (proxy): drag-release crash (0.1.14b). Field log 2026-11-24 showed a
     LEARNED-row drag dying the DAW ~250 ms after the mouse-up while a
     DISCOVERED-row drag released clean. Root cause: JUCE only counts a mouse
@@ -151,8 +170,8 @@ Integrity (sha256 / md5 / size; verify with
                          md5 2583f23a5c8ce11f742507294a4db68d   (4,220,416 bytes)
   heddle-proxy.exe       d6ac08311c40c17cba6f30a2b9d749c647e364f6507a36e5995121ae32b89853
                          md5 6c261bd722500cb91fa59a01a69df94f   (196,096 bytes)
-  HeddleProxy.vst3       37a34b3a5e97616ebbaeffff2abdd388d4ca1e0f076fb11b6b441d736f49180e
-                         md5 2bec5d3c0be89dbfe8cb3029639899b7   (3,352,064 bytes)
+  HeddleProxy.vst3       0475728c5a0bd9cb2531cf116b63be940774e45b42782c50e35c822a25e60b1a
+                         md5 71d80036803a33af5ff560a3b1797003   (8,414,208 bytes)
   HeddleSmokePlugin.vst3 364103849378509f9a379953c7d108ac9d228879f46f1a908b58e8331353d0a6
                          md5 2816e2cf0d019fae5d696938b689d4f8   (3,021,824 bytes)
   HeddleBridge.vst3      9aa31004f031ccf0a0e9727574c851db4a89d130e2c76f599986dc12736b7c1f

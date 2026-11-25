@@ -1,12 +1,12 @@
 # Bridge drag crash/hang hardening
 
-**Status:** In progress — hardening committed (`dcba74c`); run-marked logging added 2026-11-24; **field log 2026-11-24 (`doc_75129f6c`) isolated the crash**: a *learned*-row drag released outside the table died the DAW ~250 ms after the mouse-up (no `DRAG-OP-END`, no `RUN-END`); a *discovered*-row drag in the same session released clean. Root cause: the 4 Hz learn-refresh guard treated a drag as "over" the instant the button came up, but JUCE's drag image lives on ~320 ms after that, so `refreshLearn()`→`updateContent()` recycled the learn rows mid-teardown under live traffic. Fix (0.1.14b): freeze the learn list while `isDragAndDropActive()`. 0.1.14b rebuild + MSI in flight 2026-11-24.
+**Status:** In progress — **0.1.14b field-FALSIFIED** (log `000_debug.log`, 2026-11-24 22:05–23:21, 4 runs): the crash is a **MID-drag** death — last line `TICK-DRAG buttonDown=1 dragSrc=1` in every run, 0.13–0.72 s after `DRAG-OP-START`, before any `DRAG-ENTER`/`DROP`; it hits BOTH learned drags (runs 1/3/4) and a **discovered** drag (run 2, discRows=517, learnRows=0 = regression vs 0.1.14); the 0.1.14b `learn-refresh-DEFERRED` guard fired in all 4 ⇒ learn-list refresh ruled out. The §6 release-time theory is dead. **Pivot: ship crash forensics, not another guess** — 0.1.14c adds a SEH vectored handler + `MiniDumpWriteDump` → `crash-<pid>-<ms>.dmp` beside the field log on the next fatal exception; one more repro yields the exact faulting stack (symbolicate vs the RelWithDebInfo PDB in the build tree). Full trial history + build pitfalls: `docs/drag_crash_trials.md` (new, living doc).
 **Target version:** 0.1.14  
 **Delivery:** The user has NO access to the build host — every change that needs a field test ships as a **fresh MSI via email** (see `docs/README.txt` / task 00004); never reference local build-tree artifacts as test material.  
 
 **Description:** Exception‑proof all `FileDragAndDropTarget` overrides in `host/heddle_bridge/bridge.cpp`, add trace logging for drag phases, and rebuild `HeddleBridge.vst3`. Field logs additionally showed the drag crash/hang repros are proxy-plugin in-app drags — so run banners + `HEDDLE_LOGDIR` support were added to BOTH plugins (see appendix §5–6).  
 **References:** STATUS.md entry 2026‑11‑22, currently open.  
-**Next steps:** 0.1.14b rebuild (learn-refresh guard + deferral edge-log) → repackage MSI → email (field-test rule) → user repeats the SAME test: (a) drag a discovered row, release outside the table; (b) learn 1–2 rows with live traffic, drag a learned row, release outside; (c) drop a learned row ON a route row. Send back `03d_debug.log` — expected: `learn-refresh-DEFERRED` lines around each release, then `DRAG-OP-END` on every drag, clean `RUN-END`s. If it still dies, the new log pins the exact phase.
+**Next steps:** 0.1.14c rebuild green (RelWithDebInfo, proxy `0475728c…e60b1a` md5 `71d80036…` 8,414,208 B; dbghelp import verified; `bld=0.1.14c` in run banners). Package MSI → email (field-test rule) → user repeats the SAME repro ONE time: drag a learned row (or any row) and let it crash. Send back `crash-<pid>-<ms>.dmp` + the log (expect `CRASH-DUMP code=0x… written <path>` line). Then: cdb symbolication with the PDB → exact function+line → `docs/drag_crash_trials.md` gets the verdict + the real fix.
 
 ## Appendix — Code‑linked analysis (verified against working tree, 2026‑11‑24)
 
@@ -191,3 +191,44 @@ is fine for forensics.
 - Uncommitted working-tree: `bridge.cpp` + `proxy_plugin/plugin.cpp`
   (logging rework), `tasks/`, plus the 0.1.14 `docs/README.txt` refresh.
   Commit together with the next status pass.
+
+
+### 9. 0.1.14b field falsification + 0.1.14c crash-dump design (2026-11-24 evening)
+
+**Field log `000_debug.log`** (4 runs, pids 25440/14964/16608/65464, 22:05–23:21):
+
+- Every run's last line is `TICK-DRAG buttonDown=1 dragSrc=1` — button STILL DOWN.
+  Death 0.13–0.72 s after `DRAG-OP-START` (run1 311 ms, run2 715 ms, run3 711 ms,
+  run4 133 ms).
+- No `DRAG-ENTER`/`DROP`/`DROP-CB-DONE` in any run ⇒ death precedes first
+  drop-target contact; the crash is in the drag machinery (JUCE
+  `DragImageComponent`/`findTarget`/`checkForExternalDrag` path) or our
+  RouteTable drop-target pre-contact code.
+- `learn-refresh-DEFERRED` fired in ALL 4 runs (guard active) ⇒ the 0.1.14b
+  learn-list theory is falsified as the cause.
+- Run 2 = **discovered** drag (`learnRows=0 discRows=517`) ⇒ regression vs
+  0.1.14 (16:41 discovered drag clean); run 4 contains a cancelled drag
+  (no `DRAG-START`) before the fatal one.
+
+**0.1.14c design** (in `plugin.cpp`): SEH `AddVectoredExceptionHandler(1,…)` →
+`crashDumpSehHandler` handles `0xC0000005/0xC000001D/0xC0000409/0x80000003/
+0x40010006` → `MiniDumpWriteDump` (`MiniDumpNormal`,
+`MINIDUMP_EXCEPTION_INFORMATION{ThreadId, ExceptionPointers, FALSE}`) →
+`<logdir>/crash-<pid>-<ms>.dmp` + `CRASH-DUMP code=0x… written|FAILED <path>`
+line + `CRASH-DUMP-ARMED` banner at processor ctor. Built RelWithDebInfo so a
+PDB exists for symbolication (Release emits none); 66 MB PDB kept in
+`build-msvc-perf2/host/proxy_plugin/heddle_proxy_plugin_artefacts/
+RelWithDebInfo/VST3/HeddleProxy.pdb`.
+
+Build pitfalls hit this round (all recorded in `docs/drag_crash_trials.md`
+"Build pitfalls"): `#if JUCE_WINDOWS` false before JuceHeader.h (guard top-of-
+file Windows includes on `WIN32`); `dbghelp.h` must be global-scope;
+`MINIDUMP_EXCEPTION_INFORMATION` layout + non-const param; `String::toHexString`
+for DWORDs > INT_MAX; no `File::withFileName` in this JUCE fork; this fork's
+`String` hex-ctor is ambiguous (C2440) — use explicit `juce::String(int,int)` or
+`toHexString`.
+
+**Symbolication command (when the .dmp arrives):**
+```
+cdb -z crash-<pid>-<ms>.dmp -y "srv*;<path>\build-msvc-perf2" -i <path>\build-msvc-perf2 -c ".ecxr; kv; lm; q"
+```

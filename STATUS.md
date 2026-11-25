@@ -3,6 +3,30 @@
 Updated by whoever works on the project (human or agent). **Keep this file
 current after every session** — last section first.
 
+## 0.1.14c crash-dump forensics build (2026-11-25)
+
+- 🔧 **0.1.14b field-FALSIFIED → pivot to crash dumps.** User log
+  `000_debug.log` (4 runs, 22:05–23:21 24 Nov): every crash ends
+  `TICK-DRAG buttonDown=1 dragSrc=1` — MID-drag, button down, 0.13–0.72 s
+  after `DRAG-OP-START`, no `DRAG-ENTER`/`DROP` before death; learned AND
+  discovered drags affected (run 2 = regression vs 0.1.14); the 0.1.14b
+  `learn-refresh-DEFERRED` guard fired in all 4 ⇒ learn-list theory dead.
+  0.1.14c = **instrumentation, not a fix**: SEH vectored handler +
+  `MiniDumpWriteDump` → `crash-<pid>-<ms>.dmp` beside the field log on the
+  next fatal exception; run banners now carry `bld=0.1.14c` (product
+  version stays 0.1.14 across .b/.c).
+- ✅ Proxy rebuilt **RelWithDebInfo** (Release emits no PDB — a dump without
+  a PDB would be unreadable): `0475728c…e60b1a` md5 `71d80036…` 8,414,208 B;
+  `dbghelp.dll` in import table; 66 MB PDB kept in
+  `build-msvc-perf2/host/proxy_plugin/heddle_proxy_plugin_artefacts/
+  RelWithDebInfo/VST3/HeddleProxy.pdb` for symbolication.
+- ✅ Living trial doc created: **`docs/drag_crash_trials.md`** (status,
+  ranked suspected locations, trial table 0.1.13→0.1.14c, field logs
+  studied, build pitfalls, symbolication command). Update after every round.
+- 📮 Next: repackage MSI (renamed-entry plain 7z) → email with probe/IMAP
+  verify → user does ONE drag crash → sends the `.dmp` + log → cdb
+  symbolication (`docs/drag_crash_trials.md` "Symbolication command").
+
 ## CI auto-fix: proxy plugin unguarded windows.h on Linux (2026-11-24)
 
 - 🔨 **CI run `45458546552` (sha `ff0904f`, attempt 1's fix) RED on 1/6 jobs —
