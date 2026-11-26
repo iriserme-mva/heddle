@@ -4,6 +4,25 @@ Living document (task 00001). Update after every build round: one row in the
 trials table + append evidence to the relevant section. Goal: pin the root
 cause of the proxy-editor crash on row drag, using field evidence, not theory.
 
+## Status (2026-11-26)
+
+**0.1.14c field test (26 Nov 14:26–14:28, pid 38780):** build confirmed live
+(`CRASH-DUMP-ARMED (SEH vector handler)` + `bld=0.1.14c` banner). One
+discovered-row drag (row 4, ProQ3 "Band 1 Dynamic Range", discRows=517 —
+the same slot family that killed pids 14964/54224) SURVIVED: 3.2 s, 13
+TICK-DRAGs, ended `DRAG-OP-END (container teardown clean)` — the FIRST
+clean drag completion in the whole trial history. No dump, because no
+exception happened inside the DLL — the handler did its job correctly by
+having nothing to catch.
+
+**Interpretation (needs one more data point):** either the crash is
+intermittent (consistent with the clean 0.1.14 discovered drag, 24 Nov
+16:41) OR the death is EXTERNAL to HeddleProxy.dll (DAW crash or DAW
+killing the plugin) — in which case a VEH in our DLL never fires and a
+FATAL drag on 0.1.14c with NO dump is itself decisive evidence pointing
+at the DAW side. Next step: fatal drag on 0.1.14c + WER Application
+Error event (faulting module) + what dies (whole DAW vs plugin slot).
+
 ## Status (2026-11-24 evening)
 
 **Crash character (field-proven, stable across 0.1.14 → 0.1.14b):**
@@ -43,6 +62,7 @@ The dump is the arbiter — stop guessing stacks before it arrives.
 | 0.1.13 | 2026-11-23 | baseline (drag + runlog)                                   | crash on drag (first field report)                               | baseline broken                  |
 | 0.1.14 | 2026-11-24 | run-marked logging (HEDDLE_LOGDIR/NAME, RUN-START/END, PID) | discovered drag clean at 16:41; learn-row drag "crashed on release" | logging proven; crash confirmed |
 | 0.1.14b| 2026-11-24 | learn-list freeze during drag (`dragActive` gate + DEFERRED edge log) + wxs remember-paths condition → `1` | ALL 4 runs crashed MID-drag (0.13–0.72 s after DRAG-OP-START, buttonDown=1); guard fired in all 4; discovered drag ALSO crashed (regression) | **FALSIFIED** — crash not in learn-list refresh |
+| 0.1.14c| 2026-11-26 | SEH VEH minidump handler (RelWithDebInfo build, `bld=` token); NO functional change | Reinstalled; 1 discovered drag (row 4 ProQ3 "Band 1 Dynamic Range", 517 rows) survived 3.2 s → `DRAG-OP-END (container teardown clean)` — first clean completion in history; handler armed, no in-DLL exception → no dump (correct) | Crash not reproduced in this attempt; a FATAL drag with no dump would prove the death is external to the DLL (→ WER event) |
 
 ## Field logs studied
 
@@ -54,6 +74,13 @@ The dump is the arbiter — stop guessing stacks before it arrives.
   `learn-refresh-DEFERRED` present in all four; run 2 = discovered
   (discRows=517, learnRows=0) crash; run 4 contains a cancelled drag
   (no DRAG-START) before the fatal one.
+- `000_debug.log` + `debug.log` (26 Nov 14:01–14:28): pid 54224 (14:02)
+  died mid-drag on the OLD binary (no `bld=` token — DAW had cached it
+  pre-reinstall); pid 38780 (14:26, `bld=0.1.14c`, `CRASH-DUMP-ARMED`)
+  dragged the same ProQ3 slot family for 3.2 s → clean `DRAG-OP-END`.
+  Bridge side: editor closed (clean) ~10–13 s BEFORE the fatal drags in
+  every run (also before the clean 14:28 one) — likely DAW window
+  behavior, not a signal.
 
 ## Key evidence rules
 
@@ -94,9 +121,14 @@ The dump is the arbiter — stop guessing stacks before it arrives.
 - Why did the 0.1.14 discovered drag (16:41) pass but 0.1.14b's (22:20)
   crash? (Possible: different DAW state, plugin count, or the 0.1.14b
   timer/gate code itself perturbing the drag path — the minidump will show.)
-- Where did `000_debug.log` come from on the user's box (HEDDLE_LOGDIR vs
-  fallback `~\HeddleProxy\debug.log`); filename was `000_debug.log` not the
-  requested `03d_debug.log`.
+- ~~Where did `000_debug.log` come from~~ RESOLVED (2026-11-26): user set
+  `HEDDLE_LOGNAME=000_debug.log` in user env vars; `03d` was meant as an
+  int index, the name is cosmetic.
+- NEW: is the death external to HeddleProxy.dll? A fatal drag on 0.1.14c
+  with no dump (no in-DLL exception while armed) would prove it. If so:
+  WER Application Error event → faulting module names the real victim
+  (DAW exe/dll). User's reports ("DAW dies vs slot blanks", "crashes when
+  it touches some element") already hint at DAW-side drag handling.
 - Does the crash need a specific route-table width / number of learned
   rows? (runs 1/3/4 = 1–2 learn rows; run 2 = 0 learn / 517 discovered.)
 

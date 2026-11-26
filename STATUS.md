@@ -3,6 +3,23 @@
 Updated by whoever works on the project (human or agent). **Keep this file
 current after every session** — last section first.
 
+## 0.1.14c field result (2026-11-26)
+
+- ✅ **First clean drag completion in history.** Reinstalled 0.1.14c
+  (`bld=0.1.14c` banner + `CRASH-DUMP-ARMED` confirmed in user log).
+  Discovered-row drag (row 4, ProQ3 "Band 1 Dynamic Range", discRows=517 —
+  the slot family that killed the 24 Nov pids) survived **3.2 s / 13
+  TICK-DRAGs → `DRAG-OP-END (container teardown clean)`**.
+- **No dump, because no in-DLL exception happened** — the handler works by
+  having nothing to catch. Two live hypotheses (trials doc, 2026-11-26):
+  crash is intermittent, OR the death is external to HeddleProxy.dll (DAW
+  side) — in which case a FATAL drag on 0.1.14c with NO dump is itself the
+  proof, and the WER Application Error event (faulting module) is the next
+  artifact to collect.
+- Next: user does a FATAL drag on 0.1.14c; if the DAW dies, grab
+  `Get-EventLog Application -Newest 5 | findstr "Application Error"` and
+  note whether the whole DAW dies or just the plugin slot blanks.
+
 ## 0.1.14c crash-dump forensics build (2026-11-25)
 
 - 🔧 **0.1.14b field-FALSIFIED → pivot to crash dumps.** User log
